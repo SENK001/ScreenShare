@@ -27,9 +27,13 @@ using namespace std::chrono;
 #define WM_UPDATE_IMAGE (WM_USER + 1)
 #define WM_TOGGLE_TOP_MOST (WM_USER + 2)
 
-// 分片信息结构
+// 协议魔数（网络字节序写入，接收端校验）
+constexpr uint16_t FRAGMENT_MAGIC = 0x5353; // "SS" ScreenShare
+
+// 分片信息结构（保持紧凑布局，并保证至少2字节对齐）
 #pragma pack(push, 1)
-struct FragmentHeader {
+struct alignas(2) FragmentHeader {
+    uint16_t magic;          // 协议标识
     uint32_t frameId;        // 帧ID（递增）
     uint32_t frameSize;      // 整个帧的大小
     uint16_t totalFragments; // 总片段数
@@ -37,6 +41,8 @@ struct FragmentHeader {
     uint16_t fragmentSize;   // 当前片段大小
 };
 #pragma pack(pop)
+
+static_assert(sizeof(FragmentHeader) == 16, "FragmentHeader layout mismatch");
 
 const size_t MAX_FRAGMENT_SIZE = 1400; // 每个分片的最大大小
 

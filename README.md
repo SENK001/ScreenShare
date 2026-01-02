@@ -99,6 +99,7 @@ cmake --build . --config Release
 ### 数据传输协议
 
 使用自定义的分片协议，每个数据包包含：
+- 协议魔数（2 字节，固定为 0x5353，用于快速识别 ScreenShare 数据）
 - 帧 ID（4 字节）
 - 帧总大小（4 字节）
 - 总分片数（2 字节）
@@ -106,11 +107,14 @@ cmake --build . --config Release
 - 分片数据大小（2 字节）
 - 实际数据（最大 1400 字节）
 
+布局使用紧凑打包（16 字节头部）并强制至少 2 字节对齐，同时通过字节序转换（hton*/ntoh*）确保跨平台一致性。接收端会先校验魔数，异常包直接丢弃。
+
 ### 项目结构
 
 ```
 ScreenShare/
 ├── CMakeLists.txt          # CMake 构建配置
+├── ScreenShare.rc          # 资源文件
 ├── ScreenShare.manifest    # Windows 应用程序清单
 ├── README.md              # 本文档
 ├── include/               # 头文件目录
@@ -178,6 +182,8 @@ ScreenShare/
 - 双端合并
 - 选项卡式用户界面
 - 优化了降级机制
+- 优化了接收窗口，在标题上显示发送者IP和FPS信息
+- 优化了分片协议，添加魔数用于快速识别数据包
 
 ## 许可证
 
