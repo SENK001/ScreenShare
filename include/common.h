@@ -13,6 +13,7 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include <queue>
+#include <codecvt>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -41,9 +42,7 @@ const size_t MAX_FRAGMENT_SIZE = 1400; // 每个分片的最大大小
 
 // 网络适配器信息结构
 struct NetworkAdapter {
-    int index;
-    std::string name;
-    std::string description;
+    std::wstring name;
     std::string ipAddress;
 };
 

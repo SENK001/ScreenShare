@@ -41,7 +41,7 @@ HWND CreateMainWindow(HINSTANCE hInstance) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = L"ScreenShareAppClass";
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW);
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
@@ -133,9 +133,7 @@ void FillNetworkAdapters() {
     
     // 发送适配器组合框（仅实际接口）
     for (const auto& adapter : adapters) {
-        std::wstring displayText = std::wstring(adapter.description.begin(), adapter.description.end()) +
-            L" (" + std::wstring(adapter.ipAddress.begin(), adapter.ipAddress.end()) + L")";
-        SendMessage(g_hComboBoxSendAdapters, CB_ADDSTRING, 0, (LPARAM)displayText.c_str());
+        SendMessage(g_hComboBoxSendAdapters, CB_ADDSTRING, 0, (LPARAM)adapter.name.c_str());
     }
     if (!adapters.empty()) {
         SendMessage(g_hComboBoxSendAdapters, CB_SETCURSEL, 0, 0);
@@ -144,9 +142,7 @@ void FillNetworkAdapters() {
     // 接收适配器组合框（添加"任意接口"选项）
     SendMessage(g_hComboBoxRecvAdapters, CB_ADDSTRING, 0, (LPARAM)L"任意接口 (0.0.0.0)");
     for (const auto& adapter : adapters) {
-        std::wstring displayText = std::wstring(adapter.description.begin(), adapter.description.end()) +
-            L" (" + std::wstring(adapter.ipAddress.begin(), adapter.ipAddress.end()) + L")";
-        SendMessage(g_hComboBoxRecvAdapters, CB_ADDSTRING, 0, (LPARAM)displayText.c_str());
+        SendMessage(g_hComboBoxRecvAdapters, CB_ADDSTRING, 0, (LPARAM)adapter.name.c_str());
     }
     SendMessage(g_hComboBoxRecvAdapters, CB_SETCURSEL, 0, 0);
 }
@@ -169,16 +165,14 @@ void StartSending() {
     std::string localInterface = adapters[selectedIndex].ipAddress;
     
     // 获取组播地址
-    wchar_t multicastAddr[256];
-    GetWindowText(g_hEditSendMulticastAddr, multicastAddr, 256);
-    std::wstring wMulticastAddr(multicastAddr);
-    std::string sMulticastAddr(wMulticastAddr.begin(), wMulticastAddr.end());
+    char multicastAddr[256];
+    GetWindowTextA(g_hEditSendMulticastAddr, multicastAddr, 256);
+    std::string sMulticastAddr = multicastAddr;
     
     // 获取端口
-    wchar_t port[256];
-    GetWindowText(g_hEditSendPort, port, 256);
-    std::wstring wPort(port);
-    std::string sPort(wPort.begin(), wPort.end());
+    char port[256];
+    GetWindowTextA(g_hEditSendPort, port, 256);
+    std::string sPort = port;
     int iPort = std::stoi(sPort);
     
     // 开始发送
@@ -226,16 +220,14 @@ void StartReceiving() {
     }
     
     // 获取组播地址
-    wchar_t multicastAddr[256];
-    GetWindowText(g_hEditRecvMulticastAddr, multicastAddr, 256);
-    std::wstring wMulticastAddr(multicastAddr);
-    std::string sMulticastAddr(wMulticastAddr.begin(), wMulticastAddr.end());
+    char multicastAddr[256];
+    GetWindowTextA(g_hEditRecvMulticastAddr, multicastAddr, 256);
+    std::string sMulticastAddr = multicastAddr;
     
     // 获取端口
-    wchar_t port[256];
-    GetWindowText(g_hEditRecvPort, port, 256);
-    std::wstring wPort(port);
-    std::string sPort(wPort.begin(), wPort.end());
+    char port[256];
+    GetWindowTextA(g_hEditRecvPort, port, 256);
+    std::string sPort = port;
     int iPort = std::stoi(sPort);
     
     // 开始接收

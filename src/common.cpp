@@ -1,23 +1,6 @@
 #include "common.h"
 
-// 将宽字符字符串转换为多字节字符串
-std::string WCharToMByte(LPCWSTR lpcwszStr) {
-    std::string str;
-    int len = WideCharToMultiByte(CP_ACP, 0, lpcwszStr, -1, NULL, 0, NULL, NULL);
-    if (len <= 0) return "";
-
-    char* pszStr = new char[len];
-    if (!pszStr) return "";
-
-    WideCharToMultiByte(CP_ACP, 0, lpcwszStr, -1, pszStr, len, NULL, NULL);
-    pszStr[len - 1] = 0;
-    str = pszStr;
-    delete[] pszStr;
-
-    return str;
-}
-
-// 获取所有网络适配器信息
+// 获取所有有效网络适配器信息
 std::vector<NetworkAdapter> GetNetworkAdapters() {
     std::vector<NetworkAdapter> adapters;
 
@@ -38,34 +21,35 @@ std::vector<NetworkAdapter> GetNetworkAdapters() {
 
     if (dwRetVal == NO_ERROR) {
         PIP_ADAPTER_ADDRESSES pCurrAddresses = pAddresses;
-        int index = 1;
 
         while (pCurrAddresses) {
             NetworkAdapter adapter;
-            adapter.index = index;
 
-            // 转换宽字符字符串到多字节字符串
-            adapter.name = pCurrAddresses->AdapterName;
-            adapter.description = WCharToMByte(pCurrAddresses->Description);
-
-            // 获取IPv4地址
-            PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurrAddresses->FirstUnicastAddress;
-            while (pUnicast) {
-                if (pUnicast->Address.lpSockaddr->sa_family == AF_INET) {
-                    sockaddr_in* sa_in = (sockaddr_in*)pUnicast->Address.lpSockaddr;
-                    char ipStr[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &(sa_in->sin_addr), ipStr, INET_ADDRSTRLEN);
-                    adapter.ipAddress = ipStr;
-                    break;
+            // 判断适配器有效
+            if (pCurrAddresses->OperStatus == IfOperStatusUp) {
+                // 获取IPv4地址
+                PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurrAddresses->FirstUnicastAddress;
+                while (pUnicast)
+                {
+                    if (pUnicast->Address.lpSockaddr->sa_family == AF_INET)
+                    {
+                        sockaddr_in *sa_in = (sockaddr_in *)pUnicast->Address.lpSockaddr;
+                        char ipStr[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &(sa_in->sin_addr), ipStr, INET_ADDRSTRLEN);
+                        adapter.ipAddress = ipStr;
+                        break;
+                    }
+                    pUnicast = pUnicast->Next;
                 }
-                pUnicast = pUnicast->Next;
-            }
 
-            if (!adapter.ipAddress.empty()) {
-                adapters.push_back(adapter);
-                index++;
+                if (!adapter.ipAddress.empty())
+                {
+                    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+                    adapter.name = pCurrAddresses->FriendlyName;
+                    adapter.name += L" (" + converter.from_bytes(adapter.ipAddress) + L")";
+                    adapters.push_back(adapter);
+                }
             }
-
             pCurrAddresses = pCurrAddresses->Next;
         }
     }
