@@ -46,6 +46,7 @@ bool ScreenReceiver::Start(const std::string& multicastGroup, int port, const st
     m_multicastGroup = multicastGroup;
     m_port = port;
     m_localInterface = localInterface;
+    m_hParentWindow = hParentWnd; // 保存主窗口句柄
 
     // 创建图像显示窗口（如果不存在）
     if (!m_hDisplayWindow && hParentWnd) {
@@ -306,16 +307,19 @@ HWND ScreenReceiver::CreateDisplayWindow(HWND hParent) {
     wc.lpszClassName = L"ImageDisplayClass";
     wc.hbrBackground = NULL; // 设置为NULL，我们自己处理背景
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    // 为接收窗口添加图标
+    wc.hIcon = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(101), 
+                                IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
 
     RegisterClass(&wc);
 
-    // 创建窗口
+    // 创建独立窗口（不作为主窗口的子窗口）
     HWND hWnd = CreateWindow(
         L"ImageDisplayClass",
         L"接收的图像",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
-        hParent, NULL, GetModuleHandle(NULL), this
+        NULL, NULL, GetModuleHandle(NULL), this  // 改为 NULL，创建独立顶层窗口
     );
 
     return hWnd;
@@ -377,17 +381,21 @@ void ScreenReceiver::ImageProcessingThread() {
 
             // 从流创建位图
             Bitmap bitmap(stream, FALSE);
-            stream->Release();
-
+            
             if (bitmap.GetLastStatus() != Ok) {
+                stream->Release();
                 continue;
             }
 
             // 转换为HBITMAP
             HBITMAP hNewBitmap = NULL;
-            bitmap.GetHBITMAP(Color(255, 255, 255), &hNewBitmap);
+            Status status = bitmap.GetHBITMAP(Color(255, 255, 255), &hNewBitmap);
+            
+            // 释放流（不再需要）
+            stream->Release();
 
-            if (!hNewBitmap) {
+            if (status != Ok || !hNewBitmap) {
+                // GetHBITMAP失败，继续下一个
                 continue;
             }
 
@@ -474,8 +482,15 @@ void ScreenReceiver::ProcessFragment(const FragmentHeader& header, const BYTE* f
     if (state.receivedCount == state.totalFragments) {
         // 将完整帧添加到图像处理队列
         EnterCriticalSection(&m_ImageQueueCS);
-        m_ImageQueue.push(std::move(state.frameData));
-        SetEvent(m_hImageQueueEvent); // 通知有新图像数据
+        
+        // 限制队列大小，防止内存无限增长
+        const size_t MAX_QUEUE_SIZE = 10; // 最多缓存10帧
+        if (m_ImageQueue.size() < MAX_QUEUE_SIZE) {
+            m_ImageQueue.push(std::move(state.frameData));
+            SetEvent(m_hImageQueueEvent); // 通知有新图像数据
+        }
+        // 如果队列已满，丢弃该帧（避免内存泄漏）
+        
         LeaveCriticalSection(&m_ImageQueueCS);
 
         // 移除已完成的帧

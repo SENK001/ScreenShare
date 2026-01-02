@@ -487,6 +487,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
     }
     case WM_DESTROY: {
+        // 停止接收并关闭接收窗口
+        if (g_receiver.IsReceiving()) {
+            g_receiver.Stop();
+        }
+        HWND hRecvWindow = g_receiver.GetDisplayWindow();
+        if (hRecvWindow && IsWindow(hRecvWindow)) {
+            DestroyWindow(hRecvWindow);
+        }
+        
         // 清理字体
         if (g_hDefaultFont) {
             DeleteObject(g_hDefaultFont);
