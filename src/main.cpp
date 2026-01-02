@@ -77,8 +77,8 @@ void CreateControls(HWND hWnd) {
     // 发送控制 - 组播地址
     CreateWindow(L"STATIC", L"发送地址：", WS_CHILD | WS_VISIBLE | SS_LEFT,
         10, 70, 100, 20, hWnd, NULL, NULL, NULL);
-    g_hEditSendMulticastAddr = CreateWindow(L"EDIT", L"224.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER,
-        120, 70, 250, 20, hWnd, NULL, NULL, NULL);
+    g_hEditSendMulticastAddr = CreateWindow(L"EDIT", L"239.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER,
+                                            120, 70, 250, 20, hWnd, NULL, NULL, NULL);
 
     // 发送控制 - 端口
     CreateWindow(L"STATIC", L"发送端口：", WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -110,8 +110,8 @@ void CreateControls(HWND hWnd) {
     // 接收控制 - 组播地址
     CreateWindow(L"STATIC", L"接收地址：", WS_CHILD | WS_VISIBLE | SS_LEFT,
         10, 250, 100, 20, hWnd, NULL, NULL, NULL);
-    g_hEditRecvMulticastAddr = CreateWindow(L"EDIT", L"224.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER,
-        120, 250, 250, 20, hWnd, NULL, NULL, NULL);
+    g_hEditRecvMulticastAddr = CreateWindow(L"EDIT", L"239.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER,
+                                            120, 250, 250, 20, hWnd, NULL, NULL, NULL);
 
     // 接收控制 - 端口
     CreateWindow(L"STATIC", L"接收端口：", WS_CHILD | WS_VISIBLE | SS_LEFT,
