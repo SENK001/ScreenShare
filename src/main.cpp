@@ -1,6 +1,7 @@
 #include "common.h"
 #include "sender.h"
 #include "receiver.h"
+#include "resource.h"
 #include <commctrl.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -84,16 +85,23 @@ void SetupCommonControls() {
 
 // 创建主窗口
 HWND CreateMainWindow(HINSTANCE hInstance) {
-    // 注册窗口类
-    WNDCLASS wc = {};
+    // 注册窗口类（使用WNDCLASSEX支持大小图标）
+    WNDCLASSEX wc = { sizeof(WNDCLASSEX) };
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = L"ScreenShareAppClass";
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW);
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    
+    // 加载大图标（32x32或更大，根据DPI自动选择）
+    wc.hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_MAINICON), 
+                                IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
+    // 加载小图标（16x16或更大，根据DPI自动选择）
+    wc.hIconSm = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_MAINICON),
+                                  IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), 
+                                  GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-    if (!RegisterClass(&wc)) {
+    if (!RegisterClassEx(&wc)) {
         MessageBox(NULL, L"窗口注册失败", L"错误", MB_ICONERROR);
         return NULL;
     }
@@ -143,7 +151,7 @@ void CreateControls(HWND hWnd) {
     // ========== 发送控制面板 ==========
     
     // 发送控制 - 网络适配器
-    g_hSendAdapterLabel = CreateWindow(L"STATIC", L"发送适配器：", WS_CHILD | WS_VISIBLE | SS_LEFT,
+    g_hSendAdapterLabel = CreateWindow(L"STATIC", L"网络适配器：", WS_CHILD | WS_VISIBLE | SS_LEFT,
         tabLeft, tabTop, ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
     g_hComboBoxSendAdapters = CreateWindow(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
         tabLeft + ScaleDPI(110), tabTop, tabWidth - ScaleDPI(110), ScaleDPI(200), hWnd, NULL, NULL, NULL);
@@ -180,7 +188,7 @@ void CreateControls(HWND hWnd) {
     // ========== 接收控制面板 ==========
     
     // 接收控制 - 网络适配器
-    g_hRecvAdapterLabel = CreateWindow(L"STATIC", L"接收适配器：", WS_CHILD | SS_LEFT,
+    g_hRecvAdapterLabel = CreateWindow(L"STATIC", L"网络适配器：", WS_CHILD | SS_LEFT,
         tabLeft, tabTop, ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
     g_hComboBoxRecvAdapters = CreateWindow(L"COMBOBOX", L"", WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
         tabLeft + ScaleDPI(110), tabTop, tabWidth - ScaleDPI(110), ScaleDPI(200), hWnd, NULL, NULL, NULL);
@@ -365,6 +373,25 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // 创建背景刷子
         g_hBrushBackground = GetSysColorBrush(COLOR_WINDOW);
+        
+        // 设置窗口图标（支持高DPI）
+        HINSTANCE hInstance = (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
+        
+        // 加载大图标（用于Alt+Tab和任务栏）
+        HICON hIconLarge = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_MAINICON),
+                                           IMAGE_ICON, GetSystemMetrics(SM_CXICON), 
+                                           GetSystemMetrics(SM_CYICON), LR_SHARED);
+        if (hIconLarge) {
+            SendMessage(hWnd, WM_SETICON, ICON_BIG, (LPARAM)hIconLarge);
+        }
+        
+        // 加载小图标（用于标题栏和任务栏小图标）
+        HICON hIconSmall = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_MAINICON),
+                                           IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), 
+                                           GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+        if (hIconSmall) {
+            SendMessage(hWnd, WM_SETICON, ICON_SMALL, (LPARAM)hIconSmall);
+        }
         
         // 重新设置窗口大小
         SetWindowPos(hWnd, nullptr, CW_USEDEFAULT, CW_USEDEFAULT, ScaleDPI(500), ScaleDPI(280),

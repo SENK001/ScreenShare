@@ -1,4 +1,8 @@
 #include <windows.h>
+#include "include/resource.h"
+
+// 应用程序图标资源（包含多个分辨率：16, 20, 24, 32, 40, 48, 64, 256）
+IDI_MAINICON ICON DISCARDABLE "res/app.ico"
 
 // 版本信息
 #define VER_FILEVERSION             1,1,0,0
