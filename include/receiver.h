@@ -52,6 +52,9 @@ private:
     // 清理超时的帧
     void CleanupTimedOutFrames();
     
+    // 更新窗口标题
+    void UpdateWindowTitle();
+    
     // 接收线程函数
     static DWORD WINAPI RecvThreadFunc(LPVOID lpParam);
     void RecvThread();
@@ -82,6 +85,12 @@ private:
     HBITMAP m_hBitmap = NULL;
     std::map<uint32_t, FrameReassemblyState> m_Frames; // 帧ID到重组状态的映射
     std::queue<std::vector<BYTE>> m_ImageQueue; // 图像处理队列
+    
+    // FPS和源IP信息
+    std::string m_senderIPAddress = ""; // 发送者IP地址
+    uint32_t m_frameCount = 0;           // 帧计数
+    steady_clock::time_point m_lastFpsUpdateTime; // 上次FPS更新时间
+    double m_currentFPS = 0.0;           // 当前FPS
     
     // 超时设置
     static const milliseconds FRAME_TIMEOUT;

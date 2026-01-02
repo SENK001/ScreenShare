@@ -12,6 +12,7 @@ ScreenReceiver::ScreenReceiver() {
     InitializeCriticalSection(&m_ImageQueueCS);
     InitializeCriticalSection(&m_FramesCS);
     m_hImageQueueEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    m_lastFpsUpdateTime = steady_clock::now();
 }
 
 // 析构函数
@@ -68,6 +69,12 @@ bool ScreenReceiver::Start(const std::string& multicastGroup, int port, const st
         m_ImageQueue.pop();
     }
     LeaveCriticalSection(&m_ImageQueueCS);
+    
+    // 重置FPS统计
+    m_frameCount = 0;
+    m_currentFPS = 0.0;
+    m_lastFpsUpdateTime = steady_clock::now();
+    m_senderIPAddress = "";
 
     // 启动图像处理线程
     m_bImageProcessing = true;
@@ -422,6 +429,21 @@ void ScreenReceiver::ProcessFragment(const FragmentHeader& header, const BYTE* f
         newState.lastFragmentTime = steady_clock::now();
 
         m_Frames[frameId] = newState;
+        
+        // 更新FPS计数
+        m_frameCount++;
+        auto now = steady_clock::now();
+        auto elapsed = duration_cast<milliseconds>(now - m_lastFpsUpdateTime);
+        if (elapsed.count() >= 1000) {
+            m_currentFPS = (m_frameCount * 1000.0) / elapsed.count();
+            m_frameCount = 0;
+            m_lastFpsUpdateTime = now;
+            
+            // 更新窗口标题
+            if (m_hDisplayWindow) {
+                UpdateWindowTitle();
+            }
+        }
     }
 
     FrameReassemblyState& state = m_Frames[frameId];
@@ -477,6 +499,34 @@ void ScreenReceiver::CleanupTimedOutFrames() {
         }
     }
     LeaveCriticalSection(&m_FramesCS);
+}
+
+// 更新窗口标题
+void ScreenReceiver::UpdateWindowTitle() {
+    if (!m_hDisplayWindow) return;
+    
+    // 构建窗口标题：IP - FPS
+    std::string title = "画面来自";
+    
+    if (!m_senderIPAddress.empty()) {
+        title += " - ";
+        title += m_senderIPAddress;
+    }
+    
+    if (m_currentFPS > 0) {
+        char fpsStr[32];
+        sprintf_s(fpsStr, sizeof(fpsStr), " - %.1f FPS", m_currentFPS);
+        title += fpsStr;
+    }
+    
+    // 转换为宽字符
+    int titleLen = MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, NULL, 0);
+    std::wstring wtitle(titleLen, 0);
+    MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, &wtitle[0], titleLen);
+    wtitle.pop_back(); // 移除末尾的null字符
+    
+    // 设置窗口标题
+    SetWindowText(m_hDisplayWindow, wtitle.c_str());
 }
 
 // 接收线程函数（静态）
@@ -595,6 +645,16 @@ void ScreenReceiver::RecvThread() {
         // 检查数据长度是否匹配
         if (recvLen != static_cast<int>(sizeof(FragmentHeader) + header.fragmentSize)) {
             continue;
+        }
+        
+        // 获取发送者IP地址（第一次或IP变化时更新）
+        std::string senderIP = inet_ntoa(fromAddr.sin_addr);
+        if (senderIP != m_senderIPAddress) {
+            m_senderIPAddress = senderIP;
+            // IP变化时更新标题
+            if (m_hDisplayWindow) {
+                UpdateWindowTitle();
+            }
         }
 
         // 处理分片
