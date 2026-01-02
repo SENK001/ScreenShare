@@ -1,1 +1,100 @@
-/build
+# 编译生成的文件
+*.o
+*.ko
+*.obj
+*.exe
+*.out
+*.app
+*.i
+*.so
+*.dll
+*.dylib
+
+# 编译目录
+build/
+CMakeFiles/
+out/
+x64/
+x86/
+bin/
+lib/
+bin-int/
+
+# CMake 生成的文件
+CMakeCache.txt
+CMakeScripts/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+*.cmake
+CTestTestfile.cmake
+
+# IDE 文件
+.vscode/
+.idea/
+*.suo
+*.user
+*.userprefs
+
+# 临时文件
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 打包文件
+*.tar
+*.tar.gz
+*.zip
+*.7z
+
+# 日志文件
+*.log
+
+# 测试相关
+test-results/
+Testing/
+
+# 依赖目录（如第三方库）
+deps/
+thirdparty/
+external/
+
+# macOS
+.DS_Store
+._*
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Linux/Unix
+*~
+.fuse_hidden*
+
+# 其他可能的构建目录
+*/build/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# 自动生成的文件
+*_autogen/
+*_autogen_timestamp_deps
+
+# 包管理器相关
+conaninfo.txt
+conanbuildinfo.cmake
+conan.lock
+conanbuild/
+conan_imports/
+
+# 编译产物
+*.a
+*.lib
+*.pdb
+*.idb
+*.ilk
