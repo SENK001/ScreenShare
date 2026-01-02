@@ -64,7 +64,7 @@ target_link_libraries(ScreenShare PRIVATE
 if(WIN32)
     set_target_properties(ScreenShare PROPERTIES
         WIN32_EXECUTABLE TRUE
-        LINK_FLAGS "/SUBSYSTEM:WINDOWS"
+        LINK_FLAGS "/SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/ScreenShare.manifest"
     )
 endif()
 
