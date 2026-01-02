@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(ScreenShare VERSION 1.1.0 LANGUAGES CXX)
+project(ScreenShare VERSION 1.1.0 LANGUAGES CXX RC)
 
 # 设置C++标准
 set(CMAKE_CXX_STANDARD 17)
@@ -42,6 +42,12 @@ target_compile_definitions(ScreenShare PRIVATE
 target_include_directories(ScreenShare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# 设置RC编译器的包含目录
+if(WIN32 AND CMAKE_RC_COMPILER)
+    string(REPLACE ";" " " RC_INCLUDES "${CMAKE_INCLUDE_PATH}")
+    set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /i \"${CMAKE_CURRENT_SOURCE_DIR}\" /i \"${CMAKE_CURRENT_SOURCE_DIR}/res\"")
+endif()
 
 # 链接库
 target_link_libraries(ScreenShare PRIVATE
