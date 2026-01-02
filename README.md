@@ -1,198 +1,209 @@
-# ScreenShare - 屏幕共享应用程序
+# ScreenShare - Screen Sharing Application
 
-一个基于 Windows 的实时屏幕共享应用程序，使用 UDP 组播技术进行屏幕捕获和传输。
+[中文](README_zh.md) | English
 
-## 功能特点
+## Introduction
 
-- ✨ **实时屏幕捕获**：使用 DXGI Desktop Duplication API 或 GDI+ 进行高性能屏幕捕获
-- 🌐 **UDP 组播传输**：通过 UDP 组播协议实现一对多的屏幕共享
-- 🎨 **现代化 UI**：基于 Win32 API 的选项卡式界面，支持 DPI 缩放
-- 📦 **自动分片传输**：大数据包自动分片，确保可靠传输
-- 🔄 **双角色支持**：同时支持屏幕发送和接收功能
-- 🖼️ **JPEG 压缩**：图像使用 JPEG 格式压缩，减少带宽占用
+A real-time screen sharing application for Windows using UDP multicast technology for screen capture and transmission.
 
-## 系统要求
+## Features
 
-- **操作系统**：Windows 10 或更高版本
-- **编译器**：Visual Studio 2019 或更高版本（支持 C++17）
-- **CMake**：3.15 或更高版本
-- **依赖库**：
-  - GDI+ （Windows SDK）
-  - Direct3D 11 （Windows SDK）
-  - DXGI 1.2 （Windows SDK）
+- ✨ **Real-time Screen Capture**: High-performance screen capture using DXGI Desktop Duplication API or GDI+
+- 🌐 **UDP Multicast Transmission**: One-to-many screen sharing via UDP multicast protocol
+- 🎨 **Modern UI**: Tab-based interface based on Win32 API with DPI scaling support
+- 📦 **Automatic Fragment Transmission**: Large data packets are automatically fragmented for reliable transmission
+- 🔄 **Dual Role Support**: Supports both screen sending and receiving functions
+- 🖼️ **JPEG Compression**: Images compressed using JPEG format to reduce bandwidth usage
+
+## System Requirements
+
+- **Operating System**: Windows 10 or higher
+- **Compiler**: Visual Studio 2019 or higher (supporting C++17)
+- **CMake**: 3.15 or higher
+- **Dependencies**: 
+  - GDI+ (Windows SDK)
+  - Direct3D 11 (Windows SDK)
+  - DXGI 1.2 (Windows SDK)
   - Winsock2
   - IP Helper API
 
-## 构建方法
+## Build Instructions
 
-### 使用 CMake 构建
+### Building with CMake
 
-1. 克隆或下载项目到本地
-2. 打开 PowerShell 或命令提示符，导航到项目目录
-3. 创建构建目录并生成项目文件：
+1. Clone or download the project locally
+2. Open PowerShell or Command Prompt and navigate to the project directory
+3. Create a build directory and generate project files:
 
 ```bash
-# 创建构建目录
+# Create build directory
 mkdir build
 cd build
 
-# 生成 Visual Studio 项目文件
+# Generate Visual Studio project files
 cmake ..
 
-# 编译项目（Debug 模式）
+# Build project (Debug mode)
 cmake --build . --config Debug
 
-# 或编译 Release 模式
+# Or build Release mode
 cmake --build . --config Release
 ```
 
-4. 生成的可执行文件位于 `build/bin/Debug/` 或 `build/bin/Release/` 目录
+4. The generated executable files are located in `build/bin/Debug/` or `build/bin/Release/` directory
 
-### 使用 Visual Studio 构建
+### Building with Visual Studio
 
-1. 使用 CMake 生成 Visual Studio 解决方案文件
-2. 打开 `build/ScreenShare.sln`
-3. 选择构建配置（Debug 或 Release）
-4. 按 `F5` 或点击"生成解决方案"
+1. Use CMake to generate Visual Studio solution file
+2. Open `build/ScreenShare.sln`
+3. Select build configuration (Debug or Release)
+4. Press `F5` or click "Build Solution"
 
-## 使用说明
+## Usage Instructions
 
-### 发送端配置
+### Sender Configuration
 
-1. 启动程序，切换到"发送"选项卡
-2. 配置参数：
-   - **网络适配器**：选择要使用的网络接口
-   - **组播地址**：设置组播组地址（默认：239.255.0.1）
-   - **端口号**：设置 UDP 端口（默认：9277）
-3. 点击"开始发送"按钮开始共享屏幕
-4. 点击"停止发送"按钮停止共享
+1. Launch the program and switch to the "Send" tab
+2. Configure parameters:
+   - **Network Adapter**: Select the network interface to use
+   - **Multicast Address**: Set multicast group address (default: 239.255.0.1)
+   - **Port**: Set UDP port (default: 9277)
+3. Click "Start Sending" button to begin sharing screen
+4. Click "Stop Sending" button to stop sharing
 
-### 接收端配置
+### Receiver Configuration
 
-1. 启动程序（可以在同一台或不同的机器上）
-2. 切换到"接收"选项卡
-3. 配置参数：
-   - **网络适配器**：选择接收数据的网络接口
-   - **组播地址**：输入与发送端相同的组播地址
-   - **端口号**：输入与发送端相同的端口号
-4. 点击"开始接收"按钮
-5. 接收到的屏幕画面将显示在新弹出的窗口中
-6. 接收窗口支持双击切换置顶显示
+1. Launch the program (can be on the same or different machine)
+2. Switch to the "Receive" tab
+3. Configure parameters:
+   - **Network Adapter**: Select network interface for receiving data
+   - **Multicast Address**: Enter the same multicast address as sender
+   - **Port**: Enter the same port number as sender
+4. Click "Start Receiving" button
+5. Received screen will be displayed in a new popup window
+6. Receiving window supports double-click to toggle always-on-top display
 
-## 技术架构
+## Technical Architecture
 
-### 核心组件
+### Core Components
 
-- **ScreenSender**：屏幕捕获和发送模块
-  - DXGI Desktop Duplication API 进行屏幕捕获（首选）
-  - GDI+ 作为后备方案
-  - JPEG 图像压缩
-  - UDP 组播数据传输
-  - 自动分片处理
+- **ScreenSender**: Screen capture and sending module
+  - DXGI Desktop Duplication API for screen capture (preferred)
+  - GDI+ as fallback solution
+  - JPEG image compression
+  - UDP multicast data transmission
+  - Automatic fragmentation handling
 
-- **ScreenReceiver**：数据接收和显示模块
-  - UDP 组播数据接收
-  - 分片重组
-  - JPEG 图像解码
-  - 实时图像显示
+- **ScreenReceiver**: Data receiving and display module
+  - UDP multicast data receiving
+  - Fragment reassembly
+  - JPEG image decoding
+  - Real-time image display
 
-### 数据传输协议
+### Data Transfer Protocol
 
-使用自定义的分片协议，每个数据包包含：
-- 协议魔数（2 字节，固定为 0x5353，用于快速识别 ScreenShare 数据）
-- 帧 ID（4 字节）
-- 帧总大小（4 字节）
-- 总分片数（2 字节）
-- 当前分片索引（2 字节）
-- 分片数据大小（2 字节）
-- 实际数据（最大 1400 字节）
+Uses a custom fragmentation protocol where each packet contains:
+- Protocol magic number (2 bytes, fixed as 0x5353 to quickly identify ScreenShare data)
+- Frame ID (4 bytes)
+- Total frame size (4 bytes)
+- Total number of fragments (2 bytes)
+- Current fragment index (2 bytes)
+- Fragment data size (2 bytes)
+- Actual data (up to 1400 bytes)
 
-布局使用紧凑打包（16 字节头部）并强制至少 2 字节对齐，同时通过字节序转换（hton*/ntoh*）确保跨平台一致性。接收端会先校验魔数，异常包直接丢弃。
+Layout uses compact packing (16-byte header) with at least 2-byte alignment, with byte order conversion (hton*/ntoh*) to ensure cross-platform consistency. The receiver first validates the magic number, and abnormal packets are discarded directly.
 
-### 项目结构
+### Project Structure
 
 ```
 ScreenShare/
-├── CMakeLists.txt          # CMake 构建配置
-├── ScreenShare.rc          # 资源文件
-├── ScreenShare.manifest    # Windows 应用程序清单
-├── README.md              # 本文档
-├── include/               # 头文件目录
-│   ├── common.h          # 公共定义和工具函数
-│   ├── sender.h          # 发送器类声明
-│   └── receiver.h        # 接收器类声明
-├── src/                  # 源代码目录
-│   ├── main.cpp         # 主程序和 UI 逻辑
-│   ├── common.cpp       # 公共函数实现
-│   ├── sender.cpp       # 发送器实现
-│   └── receiver.cpp     # 接收器实现
-└── build/               # 构建输出目录
+├── CMakeLists.txt              # CMake build configuration
+├── ScreenShare.rc              # Resource file
+├── ScreenShare.manifest        # Windows application manifest
+├── README.md                   # English documentation
+├── README_zh.md                # Chinese documentation
+├── include/                    # Header files directory
+│   ├── common.h                # Common definitions and utility functions
+│   ├── receiver.h              # Receiver class declaration
+│   ├── resource.h              # Resource definitions
+│   └── sender.h                # Sender class declaration
+├── src/                        # Source code directory
+│   ├── main.cpp                # Main program and UI logic
+│   ├── common.cpp              # Common function implementation
+│   ├── receiver.cpp            # Receiver implementation
+│   └── sender.cpp              # Sender implementation
+├── res/                        # Resource files directory
+│   ├── app.ico                 # Application icon
+│   └── [other resource files]
+├── tools/                      # Tool scripts directory
+│   └── convert_to_ico.ps1      # PowerShell script to convert images to ICO
+└── build/                      # Build output directory (generated during build)
 ```
 
-## 网络配置说明
+## Network Configuration Notes
 
-### 组播地址范围
+### Multicast Address Range
 
-- 推荐使用私有组播地址范围：`239.255.0.0 - 239.255.255.255`
-- 默认地址：`239.255.0.1`
+- Recommended to use private multicast address range: `239.255.0.0 - 239.255.255.255`
+- Default address: `239.255.0.1`
 
-### 端口选择
+### Port Selection
 
-- 可以使用任意未被占用的 UDP 端口
-- 默认端口：`9277`
-- 确保防火墙允许相应的端口通信
+- Can use any unused UDP port
+- Default port: `9277`
+- Ensure firewall allows communication on the corresponding port
 
-### 网络适配器
+### Network Adapter
 
-- 程序会自动枚举系统中所有可用的网络适配器
-- 发送端和接收端应使用同一网络中的适配器
-- 如果使用多个网络接口，确保选择正确的适配器
+- The program automatically enumerates all available network adapters in the system
+- Sender and receiver should use adapters in the same network
+- If using multiple network interfaces, ensure the correct adapter is selected
 
-## 故障排除
+## Troubleshooting
 
-### 无法接收到画面
+### Unable to receive screen
 
-1. 检查发送端和接收端是否在同一网络中
-2. 确认组播地址和端口号配置一致
-3. 检查防火墙设置，确保允许 UDP 通信
-4. 验证路由器是否支持组播转发
+1. Check if sender and receiver are on the same network
+2. Confirm multicast address and port configuration match
+3. Check firewall settings to ensure UDP communication is allowed
+4. Verify router supports multicast forwarding
 
-### 画面延迟或卡顿
+### Screen delay or stuttering
 
-1. 检查网络带宽是否充足
-2. 尝试降低发送端的屏幕分辨率
-3. 确保 CPU 和 GPU 资源充足
-4. 减少同时接收的客户端数量
+1. Check if network bandwidth is sufficient
+2. Try reducing the screen resolution on the sender side
+3. Ensure CPU and GPU resources are sufficient
+4. Reduce the number of simultaneous receiving clients
 
-### 编译错误
+### Compilation errors
 
-1. 确保安装了 Windows SDK
-2. 验证 Visual Studio 版本支持 C++17
-3. 检查 CMake 版本是否满足要求（≥3.15）
+1. Ensure Windows SDK is installed
+2. Verify Visual Studio version supports C++17
+3. Check CMake version meets requirements (≥3.15)
 
-## 版本历史
+## Version History
 
 ### v1.0.0 (2025-08-28)
-- 初始版本发布
-- 基本的屏幕捕获和传输功能
-- DXGI 和 GDI+ 双模式支持
-- UDP 组播传输
+- Initial version release
+- Basic screen capture and transmission functionality
+- DXGI and GDI+ dual-mode support
+- UDP multicast transmission
 
 ### v1.1.0 (2026-01-03)
-- 双端合并
-- 选项卡式用户界面
-- 优化了降级机制
-- 优化了接收窗口，在标题上显示发送者IP和FPS信息
-- 优化了分片协议，添加魔数用于快速识别数据包
+- Merged sender and receiver into single application
+- Tab-based user interface
+- Optimized fallback mechanism
+- Optimized receiving window to display sender IP and FPS information in title
+- Optimized fragmentation protocol with magic number for quick packet identification
 
-## 许可证
+## License
 
-本项目仅供学习和研究使用。
+This project is for learning and research purposes only.
 
-## 贡献
+## Contributing
 
-欢迎提交问题和改进建议。
+Issues and suggestions are welcome.
 
-## 联系方式
+## Contact
 
-如有问题或建议，请通过 GitHub Issues 联系。
+For questions or suggestions, please contact via GitHub Issues.
