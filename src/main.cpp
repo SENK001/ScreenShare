@@ -151,7 +151,7 @@ void CreateControls(HWND hWnd) {
     // 发送控制 - 组播地址
     g_hSendAddrLabel = CreateWindow(L"STATIC", L"组播地址：", WS_CHILD | WS_VISIBLE | SS_LEFT,
         tabLeft, tabTop + ScaleDPI(40), ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
-    g_hEditSendMulticastAddr = CreateWindow(L"EDIT", L"239.0.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
+    g_hEditSendMulticastAddr = CreateWindow(L"EDIT", L"239.255.0.1", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
         tabLeft + ScaleDPI(110), tabTop + ScaleDPI(40), tabWidth - ScaleDPI(110), ScaleDPI(23), hWnd, NULL, NULL, NULL);
 
     // 发送控制 - 端口
@@ -188,7 +188,7 @@ void CreateControls(HWND hWnd) {
     // 接收控制 - 组播地址
     g_hRecvAddrLabel = CreateWindow(L"STATIC", L"组播地址：", WS_CHILD | SS_LEFT,
         tabLeft, tabTop + ScaleDPI(40), ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
-    g_hEditRecvMulticastAddr = CreateWindow(L"EDIT", L"239.0.0.1", WS_CHILD | WS_BORDER | ES_LEFT,
+    g_hEditRecvMulticastAddr = CreateWindow(L"EDIT", L"239.255.0.1", WS_CHILD | WS_BORDER | ES_LEFT,
         tabLeft + ScaleDPI(110), tabTop + ScaleDPI(40), tabWidth - ScaleDPI(110), ScaleDPI(23), hWnd, NULL, NULL, NULL);
 
     // 接收控制 - 端口
