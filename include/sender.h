@@ -48,6 +48,10 @@ private:
     
     // 帧ID计数器
     uint32_t m_frameId = 0;
+
+    // DXGI降级策略：计数连续失败次数，只在多次失败后才降级
+    int m_dxgiFailureCount = 0;
+    static constexpr int DXGI_FAILURE_THRESHOLD = 10; // 连续失败10次才降级
 };
 
 #endif // SENDER_H

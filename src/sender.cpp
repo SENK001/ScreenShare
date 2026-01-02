@@ -56,6 +56,9 @@ void ScreenSender::Stop() {
         m_d3dDevice->Release();
         m_d3dDevice = nullptr;
     }
+
+    // 重置失败计数器
+    m_dxgiFailureCount = 0;
 }
 
 bool ScreenSender::InitDXGIDuplication() {
@@ -82,6 +85,10 @@ bool ScreenSender::InitDXGIDuplication() {
     IDXGIDevice* dxgiDevice = nullptr;
     hr = m_d3dDevice->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice));
     if (FAILED(hr)) {
+        m_d3dDevice->Release();
+        m_d3dDevice = nullptr;
+        m_d3dContext->Release();
+        m_d3dContext = nullptr;
         return false;
     }
 
@@ -90,6 +97,10 @@ bool ScreenSender::InitDXGIDuplication() {
     hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
     dxgiDevice->Release();
     if (FAILED(hr)) {
+        m_d3dDevice->Release();
+        m_d3dDevice = nullptr;
+        m_d3dContext->Release();
+        m_d3dContext = nullptr;
         return false;
     }
 
@@ -98,14 +109,22 @@ bool ScreenSender::InitDXGIDuplication() {
     hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
     dxgiAdapter->Release();
     if (FAILED(hr)) {
+        m_d3dDevice->Release();
+        m_d3dDevice = nullptr;
+        m_d3dContext->Release();
+        m_d3dContext = nullptr;
         return false;
     }
 
-    // 获取DXGI输出1
+    // 获取DXGI输出1 - 关键修复：使用 IDXGIOutput1 而不是变量名 dxgiOutput1
     IDXGIOutput1* dxgiOutput1 = nullptr;
-    hr = dxgiOutput->QueryInterface(__uuidof(dxgiOutput1), reinterpret_cast<void**>(&dxgiOutput1));
+    hr = dxgiOutput->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(&dxgiOutput1));
     dxgiOutput->Release();
     if (FAILED(hr)) {
+        m_d3dDevice->Release();
+        m_d3dDevice = nullptr;
+        m_d3dContext->Release();
+        m_d3dContext = nullptr;
         return false;
     }
 
@@ -113,12 +132,22 @@ bool ScreenSender::InitDXGIDuplication() {
     hr = dxgiOutput1->DuplicateOutput(m_d3dDevice, &m_deskDupl);
     dxgiOutput1->Release();
     if (FAILED(hr)) {
+        m_d3dDevice->Release();
+        m_d3dDevice = nullptr;
+        m_d3dContext->Release();
+        m_d3dContext = nullptr;
         return false;
     }
 
     // 获取输出复制描述
     DXGI_OUTDUPL_DESC outputDuplDesc;
     m_deskDupl->GetDesc(&outputDuplDesc);
+
+    // 保存输出矩形用于光标绘制位置调整
+    m_outputRect.left = 0;
+    m_outputRect.top = 0;
+    m_outputRect.right = outputDuplDesc.ModeDesc.Width;
+    m_outputRect.bottom = outputDuplDesc.ModeDesc.Height;
 
     // 创建暂存纹理
     D3D11_TEXTURE2D_DESC desc;
@@ -390,30 +419,40 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
 
         if (useDXGI) {
             captureSuccess = CaptureScreenDXGI(jpegData);
-            // 如果DXGI失败，回退到GDI
+            
+            // 改进的降级策略：根据连续失败次数决定是否降级
             if (!captureSuccess) {
-                useDXGI = false;
-                // 清理DXGI资源
-                if (m_stagingTexture) {
-                    m_stagingTexture->Release();
-                    m_stagingTexture = nullptr;
+                m_dxgiFailureCount++;
+                
+                // 连续失败次数超过阈值才永久降级
+                if (m_dxgiFailureCount >= DXGI_FAILURE_THRESHOLD) {
+                    useDXGI = false;
+                    // 清理DXGI资源
+                    if (m_stagingTexture) {
+                        m_stagingTexture->Release();
+                        m_stagingTexture = nullptr;
+                    }
+                    if (m_deskDupl) {
+                        m_deskDupl->Release();
+                        m_deskDupl = nullptr;
+                    }
+                    if (m_d3dContext) {
+                        m_d3dContext->Release();
+                        m_d3dContext = nullptr;
+                    }
+                    if (m_d3dDevice) {
+                        m_d3dDevice->Release();
+                        m_d3dDevice = nullptr;
+                    }
                 }
-                if (m_deskDupl) {
-                    m_deskDupl->Release();
-                    m_deskDupl = nullptr;
-                }
-                if (m_d3dContext) {
-                    m_d3dContext->Release();
-                    m_d3dContext = nullptr;
-                }
-                if (m_d3dDevice) {
-                    m_d3dDevice->Release();
-                    m_d3dDevice = nullptr;
-                }
+            } else {
+                // 成功捕获，重置失败计数
+                m_dxgiFailureCount = 0;
             }
         }
 
-        if (!useDXGI) {
+        // 如果失败，则使用GDI
+        if (!captureSuccess) {
             captureSuccess = CaptureScreenGDI(jpegData);
         }
 
