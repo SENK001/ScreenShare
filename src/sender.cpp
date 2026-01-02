@@ -210,6 +210,9 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
         return false;
     }
 
+    // 标记需要Unmap
+    bool bMapped = true;
+
     // 创建GDI+位图
     Bitmap bitmap(outputDuplDesc.ModeDesc.Width,
         outputDuplDesc.ModeDesc.Height,
@@ -222,28 +225,42 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
         Graphics graphics(&bitmap);
 
         // 获取光标图标
-        ICONINFO iconInfo;
+        ICONINFO iconInfo = { 0 };
         if (GetIconInfo(cursorInfo.hCursor, &iconInfo)) {
+            // 使用RAII确保资源释放
+            struct IconInfoCleanup {
+                ICONINFO& info;
+                ~IconInfoCleanup() {
+                    if (info.hbmMask) DeleteObject(info.hbmMask);
+                    if (info.hbmColor) DeleteObject(info.hbmColor);
+                }
+            } cleanup{ iconInfo };
+
             // 计算光标位置（调整热点偏移）
             int x = cursorInfo.ptScreenPos.x - iconInfo.xHotspot - m_outputRect.left;
             int y = cursorInfo.ptScreenPos.y - iconInfo.yHotspot - m_outputRect.top;
 
             // 绘制光标
-            DrawIconEx(graphics.GetHDC(), x, y, cursorInfo.hCursor, 0, 0, 0, NULL, DI_NORMAL);
-            graphics.ReleaseHDC(graphics.GetHDC());
-
-            // 清理资源
-            if (iconInfo.hbmMask) DeleteObject(iconInfo.hbmMask);
-            if (iconInfo.hbmColor) DeleteObject(iconInfo.hbmColor);
+            HDC hdc = graphics.GetHDC();
+            DrawIconEx(hdc, x, y, cursorInfo.hCursor, 0, 0, 0, NULL, DI_NORMAL);
+            graphics.ReleaseHDC(hdc);
         }
     }
 
     // 编码为JPEG
     IStream* stream = NULL;
-    CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    if (FAILED(hr) || !stream) {
+        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        return false;
+    }
 
     CLSID clsid;
-    GetEncoderClsid(L"image/jpeg", &clsid);
+    if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
+        stream->Release();
+        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        return false;
+    }
 
     EncoderParameters encoderParams;
     encoderParams.Count = 1;
@@ -254,28 +271,50 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     ULONG quality = 95;
     encoderParams.Parameter[0].Value = &quality;
 
-    bitmap.Save(stream, &clsid, &encoderParams);
+    Status status = bitmap.Save(stream, &clsid, &encoderParams);
+    if (status != Ok) {
+        stream->Release();
+        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        return false;
+    }
 
     // 获取流数据
     STATSTG stats;
-    stream->Stat(&stats, STATFLAG_NONAME);
+    hr = stream->Stat(&stats, STATFLAG_NONAME);
+    if (FAILED(hr)) {
+        stream->Release();
+        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        return false;
+    }
     DWORD streamSize = stats.cbSize.LowPart;
 
     HGLOBAL hGlobal = NULL;
-    GetHGlobalFromStream(stream, &hGlobal);
+    hr = GetHGlobalFromStream(stream, &hGlobal);
+    if (FAILED(hr) || !hGlobal) {
+        stream->Release();
+        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        return false;
+    }
+
     BYTE* pData = (BYTE*)GlobalLock(hGlobal);
+    if (!pData) {
+        stream->Release();
+        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        return false;
+    }
 
     jpegData.resize(streamSize);
     memcpy(jpegData.data(), pData, streamSize);
 
     GlobalUnlock(hGlobal);
     stream->Release();
-    m_d3dContext->Unmap(m_stagingTexture, 0);
+    if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
 
     return true;
 }
 
 bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
+    HRESULT hr; // 用于错误检查
     HDC hdcScreen = GetDC(NULL);
     HDC hdcMem = CreateCompatibleDC(hdcScreen);
 
@@ -293,18 +332,23 @@ bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
     cursorInfo.cbSize = sizeof(cursorInfo);
     if (GetCursorInfo(&cursorInfo) && (cursorInfo.flags & CURSOR_SHOWING)) {
         // 获取光标图标
-        ICONINFO iconInfo;
+        ICONINFO iconInfo = { 0 };
         if (GetIconInfo(cursorInfo.hCursor, &iconInfo)) {
+            // 使用RAII确保资源释放
+            struct IconInfoCleanup {
+                ICONINFO& info;
+                ~IconInfoCleanup() {
+                    if (info.hbmMask) DeleteObject(info.hbmMask);
+                    if (info.hbmColor) DeleteObject(info.hbmColor);
+                }
+            } cleanup{ iconInfo };
+
             // 计算光标位置（调整热点偏移）
             int x = cursorInfo.ptScreenPos.x - iconInfo.xHotspot;
             int y = cursorInfo.ptScreenPos.y - iconInfo.yHotspot;
 
             // 绘制光标
             DrawIconEx(hdcMem, x, y, cursorInfo.hCursor, 0, 0, 0, NULL, DI_NORMAL);
-
-            // 清理资源
-            if (iconInfo.hbmMask) DeleteObject(iconInfo.hbmMask);
-            if (iconInfo.hbmColor) DeleteObject(iconInfo.hbmColor);
         }
     }
 
@@ -313,11 +357,23 @@ bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
 
     // 创建内存流
     IStream* stream = NULL;
-    CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    if (FAILED(hr) || !stream) {
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return false;
+    }
 
     // 编码参数 - 设置JPEG质量
     CLSID clsid;
-    GetEncoderClsid(L"image/jpeg", &clsid);
+    if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
+        stream->Release();
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return false;
+    }
 
     EncoderParameters encoderParams;
     encoderParams.Count = 1;
@@ -330,17 +386,46 @@ bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
     encoderParams.Parameter[0].Value = &quality;
 
     // 保存为JPEG到内存流
-    bitmap.Save(stream, &clsid, &encoderParams);
+    Status status = bitmap.Save(stream, &clsid, &encoderParams);
+    if (status != Ok) {
+        stream->Release();
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return false;
+    }
 
     // 获取流大小
     STATSTG stats;
-    stream->Stat(&stats, STATFLAG_NONAME);
+    hr = stream->Stat(&stats, STATFLAG_NONAME);
+    if (FAILED(hr)) {
+        stream->Release();
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return false;
+    }
     DWORD streamSize = stats.cbSize.LowPart;
 
     // 读取流数据
     HGLOBAL hGlobal = NULL;
-    GetHGlobalFromStream(stream, &hGlobal);
+    hr = GetHGlobalFromStream(stream, &hGlobal);
+    if (FAILED(hr) || !hGlobal) {
+        stream->Release();
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return false;
+    }
+
     BYTE* pData = (BYTE*)GlobalLock(hGlobal);
+    if (!pData) {
+        stream->Release();
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return false;
+    }
 
     jpegData.resize(streamSize);
     memcpy(jpegData.data(), pData, streamSize);

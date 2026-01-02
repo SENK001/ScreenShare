@@ -61,6 +61,7 @@ private:
 
     // 窗口相关
     HWND m_hDisplayWindow = NULL;
+    HWND m_hParentWindow = NULL; // 用于在主窗口关闭时关闭接收窗口
     bool m_bDisplayWindowTopMost = false;
     
     // 接收参数
