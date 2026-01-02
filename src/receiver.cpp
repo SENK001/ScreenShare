@@ -635,7 +635,11 @@ void ScreenReceiver::RecvThread() {
         FragmentHeader header;
         memcpy(&header, recvBuf, sizeof(FragmentHeader));
 
-        // 转换网络字节序到主机字节序
+        // 校验魔数并转换网络字节序到主机字节序
+        header.magic = ntohs(header.magic);
+        if (header.magic != FRAGMENT_MAGIC) {
+            continue;
+        }
         header.frameId = ntohl(header.frameId);
         header.frameSize = ntohl(header.frameSize);
         header.totalFragments = ntohs(header.totalFragments);

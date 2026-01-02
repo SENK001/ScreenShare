@@ -470,6 +470,7 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
 
                 // 准备分片头
                 FragmentHeader header;
+                header.magic = htons(FRAGMENT_MAGIC);
                 header.frameId = htonl(m_frameId);            // 添加帧ID
                 header.frameSize = htonl(static_cast<uint32_t>(frameSize));
                 header.totalFragments = htons(totalFragments);
