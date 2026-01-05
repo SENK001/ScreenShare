@@ -171,7 +171,166 @@ bool ScreenSender::InitDXGIDuplication() {
     return true;
 }
 
-bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
+bool ScreenSender::EncodeBitmapToPNG(Bitmap* bitmap, std::vector<BYTE>& pngData) {
+    if (!bitmap) return false;
+    
+    // 创建内存流
+    IStream* stream = NULL;
+    HRESULT hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    if (FAILED(hr) || !stream) {
+        return false;
+    }
+
+    // 获取PNG编码器
+    CLSID clsid;
+    if (GetPngEncoderClsid(&clsid) < 0) {
+        stream->Release();
+        return false;
+    }
+
+    // 保存为PNG（无损压缩）
+    Status status = bitmap->Save(stream, &clsid, NULL);
+    if (status != Ok) {
+        stream->Release();
+        return false;
+    }
+
+    // 获取流数据
+    STATSTG stats;
+    hr = stream->Stat(&stats, STATFLAG_NONAME);
+    if (FAILED(hr)) {
+        stream->Release();
+        return false;
+    }
+    DWORD streamSize = stats.cbSize.LowPart;
+
+    HGLOBAL hGlobal = NULL;
+    hr = GetHGlobalFromStream(stream, &hGlobal);
+    if (FAILED(hr) || !hGlobal) {
+        stream->Release();
+        return false;
+    }
+
+    BYTE* pData = (BYTE*)GlobalLock(hGlobal);
+    if (!pData) {
+        stream->Release();
+        return false;
+    }
+
+    pngData.resize(streamSize);
+    memcpy(pngData.data(), pData, streamSize);
+
+    GlobalUnlock(hGlobal);
+    stream->Release();
+
+    return true;
+}
+
+bool ScreenSender::DetectAndEncodeDelta(Bitmap* currentFrame, std::vector<BYTE>& deltaData) {
+    if (!currentFrame) return false;
+    
+    int width = currentFrame->GetWidth();
+    int height = currentFrame->GetHeight();
+    
+    // 如果是第一帧或尺寸改变，必须发送关键帧
+    if (m_lastFrameData.empty() || width != m_lastFrameWidth || height != m_lastFrameHeight) {
+        return false;
+    }
+    
+    // 锁定当前帧位图数据
+    BitmapData currentData;
+    Rect rect(0, 0, width, height);
+    if (currentFrame->LockBits(&rect, ImageLockModeRead, PixelFormat32bppARGB, &currentData) != Ok) {
+        return false;
+    }
+    
+    // 查找变化区域
+    int minX = width, minY = height, maxX = 0, maxY = 0;
+    bool hasChanges = false;
+    
+    BYTE* currentPtr = (BYTE*)currentData.Scan0;
+    BYTE* lastPtr = m_lastFrameData.data();
+    
+    const int threshold = 10; // 像素差异阈值
+    const int bytesPerPixel = 4; // ARGB = 4字节
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int offset = y * currentData.Stride + x * bytesPerPixel;
+            
+            // 比较像素差异
+            bool pixelChanged = false;
+            for (int c = 0; c < 3; c++) { // 仅比较RGB，忽略A
+                if (abs(currentPtr[offset + c] - lastPtr[offset + c]) > threshold) {
+                    pixelChanged = true;
+                    break;
+                }
+            }
+            
+            if (pixelChanged) {
+                hasChanges = true;
+                minX = std::min(minX, x);
+                minY = std::min(minY, y);
+                maxX = std::max(maxX, x);
+                maxY = std::max(maxY, y);
+            }
+        }
+    }
+    
+    currentFrame->UnlockBits(&currentData);
+    
+    // 如果变化太大（超过50%），发送关键帧
+    if (hasChanges) {
+        int changedWidth = maxX - minX + 1;
+        int changedHeight = maxY - minY + 1;
+        float changeRatio = (float)(changedWidth * changedHeight) / (width * height);
+        
+        if (changeRatio > 0.5f) {
+            return false; // 变化太大，发送关键帧
+        }
+        
+        // 提取变化区域（扩展边界以包含更多上下文）
+        int expandPixels = 10;
+        minX = std::max(0, minX - expandPixels);
+        minY = std::max(0, minY - expandPixels);
+        maxX = std::min(width - 1, maxX + expandPixels);
+        maxY = std::min(height - 1, maxY + expandPixels);
+        
+        int deltaWidth = maxX - minX + 1;
+        int deltaHeight = maxY - minY + 1;
+        
+        // 创建差异区域位图
+        Bitmap deltaBitmap(deltaWidth + 8, deltaHeight, PixelFormat32bppARGB);
+        Graphics g(&deltaBitmap);
+        
+        // 前8像素存储位置信息（minX, minY各4字节）
+        // 绘制白色背景确保位置信息可见
+        g.Clear(Color(255, 255, 255, 255));
+        
+        // 将位置编码到图像前8像素（每个坐标用4像素存储）
+        for (int i = 0; i < 4; i++) {
+            int xByte = (minX >> (i * 8)) & 0xFF;
+            int yByte = (minY >> (i * 8)) & 0xFF;
+            deltaBitmap.SetPixel(i, 0, Color(255, xByte, xByte, xByte));
+            deltaBitmap.SetPixel(i + 4, 0, Color(255, yByte, yByte, yByte));
+        }
+        
+        // 复制变化区域
+        Rect srcRect(minX, minY, deltaWidth, deltaHeight);
+        g.DrawImage(currentFrame, 8, 0, srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height, UnitPixel);
+        
+        // 编码为PNG
+        if (!EncodeBitmapToPNG(&deltaBitmap, deltaData)) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    return false; // 无变化，不发送
+}
+
+bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& pngData, FrameType& frameType) {
     if (!m_deskDupl) {
         return false;
     }
@@ -247,74 +406,43 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
         }
     }
 
-    // 编码为JPEG
-    IStream* stream = NULL;
-    hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
-    if (FAILED(hr) || !stream) {
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-        return false;
+    // 决定发送关键帧还是差异帧
+    bool shouldSendKeyFrame = (m_framesSinceKeyFrame >= KEY_FRAME_INTERVAL) || m_lastFrameData.empty();
+    
+    std::vector<BYTE> deltaData;
+    bool useDelta = false;
+    
+    if (!shouldSendKeyFrame) {
+        // 尝试生成差异帧
+        useDelta = DetectAndEncodeDelta(&bitmap, deltaData);
+    }
+    
+    if (useDelta && !deltaData.empty()) {
+        // 使用差异帧
+        pngData = std::move(deltaData);
+        frameType = FrameType::DELTA_FRAME;
+        m_framesSinceKeyFrame++;
+    } else {
+        // 发送关键帧
+        if (!EncodeBitmapToPNG(&bitmap, pngData)) {
+            if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+            return false;
+        }
+        frameType = FrameType::KEY_FRAME;
+        m_framesSinceKeyFrame = 0;
+        
+        // 保存当前帧数据用于下次差异检测
+        m_lastFrameWidth = outputDuplDesc.ModeDesc.Width;
+        m_lastFrameHeight = outputDuplDesc.ModeDesc.Height;
+        m_lastFrameData.resize(m_lastFrameHeight * mapped.RowPitch);
+        memcpy(m_lastFrameData.data(), mapped.pData, m_lastFrameData.size());
     }
 
-    CLSID clsid;
-    if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
-        stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-        return false;
-    }
-
-    EncoderParameters encoderParams;
-    encoderParams.Count = 1;
-    encoderParams.Parameter[0].Guid = EncoderQuality;
-    encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
-    encoderParams.Parameter[0].NumberOfValues = 1;
-
-    ULONG quality = 95;
-    encoderParams.Parameter[0].Value = &quality;
-
-    Status status = bitmap.Save(stream, &clsid, &encoderParams);
-    if (status != Ok) {
-        stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-        return false;
-    }
-
-    // 获取流数据
-    STATSTG stats;
-    hr = stream->Stat(&stats, STATFLAG_NONAME);
-    if (FAILED(hr)) {
-        stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-        return false;
-    }
-    DWORD streamSize = stats.cbSize.LowPart;
-
-    HGLOBAL hGlobal = NULL;
-    hr = GetHGlobalFromStream(stream, &hGlobal);
-    if (FAILED(hr) || !hGlobal) {
-        stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-        return false;
-    }
-
-    BYTE* pData = (BYTE*)GlobalLock(hGlobal);
-    if (!pData) {
-        stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-        return false;
-    }
-
-    jpegData.resize(streamSize);
-    memcpy(jpegData.data(), pData, streamSize);
-
-    GlobalUnlock(hGlobal);
-    stream->Release();
     if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
-
     return true;
 }
 
-bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
-    HRESULT hr; // 用于错误检查
+bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& pngData, FrameType& frameType) {
     HDC hdcScreen = GetDC(NULL);
     HDC hdcMem = CreateCompatibleDC(hdcScreen);
 
@@ -352,92 +480,54 @@ bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
         }
     }
 
-    // 使用GDI+将位图转换为JPEG
+    // 使用GDI+将位图转换为PNG
     Bitmap bitmap(hBitmap, NULL);
 
-    // 创建内存流
-    IStream* stream = NULL;
-    hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
-    if (FAILED(hr) || !stream) {
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
+    // 决定发送关键帧还是差异帧
+    bool shouldSendKeyFrame = (m_framesSinceKeyFrame >= KEY_FRAME_INTERVAL) || m_lastFrameData.empty();
+    
+    std::vector<BYTE> deltaData;
+    bool useDelta = false;
+    
+    if (!shouldSendKeyFrame) {
+        // 尝试生成差异帧
+        useDelta = DetectAndEncodeDelta(&bitmap, deltaData);
     }
-
-    // 编码参数 - 设置JPEG质量
-    CLSID clsid;
-    if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
+    
+    bool success = false;
+    if (useDelta && !deltaData.empty()) {
+        // 使用差异帧
+        pngData = std::move(deltaData);
+        frameType = FrameType::DELTA_FRAME;
+        m_framesSinceKeyFrame++;
+        success = true;
+    } else {
+        // 发送关键帧
+        if (EncodeBitmapToPNG(&bitmap, pngData)) {
+            frameType = FrameType::KEY_FRAME;
+            m_framesSinceKeyFrame = 0;
+            
+            // 保存当前帧数据用于下次差异检测
+            m_lastFrameWidth = screenWidth;
+            m_lastFrameHeight = screenHeight;
+            
+            BitmapData bmpData;
+            Rect rect(0, 0, screenWidth, screenHeight);
+            if (bitmap.LockBits(&rect, ImageLockModeRead, PixelFormat32bppARGB, &bmpData) == Ok) {
+                m_lastFrameData.resize(screenHeight * bmpData.Stride);
+                memcpy(m_lastFrameData.data(), bmpData.Scan0, m_lastFrameData.size());
+                bitmap.UnlockBits(&bmpData);
+            }
+            success = true;
+        }
     }
-
-    EncoderParameters encoderParams;
-    encoderParams.Count = 1;
-    encoderParams.Parameter[0].Guid = EncoderQuality;
-    encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
-    encoderParams.Parameter[0].NumberOfValues = 1;
-
-    // 设置质量（0-100，越高质量越好但文件越大）
-    ULONG quality = 95;
-    encoderParams.Parameter[0].Value = &quality;
-
-    // 保存为JPEG到内存流
-    Status status = bitmap.Save(stream, &clsid, &encoderParams);
-    if (status != Ok) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    // 获取流大小
-    STATSTG stats;
-    hr = stream->Stat(&stats, STATFLAG_NONAME);
-    if (FAILED(hr)) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-    DWORD streamSize = stats.cbSize.LowPart;
-
-    // 读取流数据
-    HGLOBAL hGlobal = NULL;
-    hr = GetHGlobalFromStream(stream, &hGlobal);
-    if (FAILED(hr) || !hGlobal) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    BYTE* pData = (BYTE*)GlobalLock(hGlobal);
-    if (!pData) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    jpegData.resize(streamSize);
-    memcpy(jpegData.data(), pData, streamSize);
 
     // 清理
-    GlobalUnlock(hGlobal);
-    stream->Release();
     DeleteObject(hBitmap);
     DeleteDC(hdcMem);
     ReleaseDC(NULL, hdcScreen);
 
-    return true;
+    return success;
 }
 
 void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, const std::string& localInterface) {
@@ -482,6 +572,7 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
 
     // 帧ID计数器
     m_frameId = 0;
+    m_framesSinceKeyFrame = 0;
 
     // 30FPS的帧间隔（约33.3毫秒）
     const milliseconds frameInterval(33);
@@ -498,12 +589,13 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
         // 递增帧ID
         m_frameId++;
 
-        // 捕获屏幕并转换为JPEG
-        std::vector<BYTE> jpegData;
+        // 捕获屏幕并转换为PNG
+        std::vector<BYTE> pngData;
+        FrameType frameType = FrameType::KEY_FRAME;
         bool captureSuccess = false;
 
         if (useDXGI) {
-            captureSuccess = CaptureScreenDXGI(jpegData);
+            captureSuccess = CaptureScreenDXGI(pngData, frameType);
             
             // 改进的降级策略：根据连续失败次数决定是否降级
             if (!captureSuccess) {
@@ -538,12 +630,12 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
 
         // 如果失败，则使用GDI
         if (!captureSuccess) {
-            captureSuccess = CaptureScreenGDI(jpegData);
+            captureSuccess = CaptureScreenGDI(pngData, frameType);
         }
 
-        if (captureSuccess) {
+        if (captureSuccess && !pngData.empty()) {
             // 计算需要多少分片
-            size_t frameSize = jpegData.size();
+            size_t frameSize = pngData.size();
             uint16_t totalFragments = static_cast<uint16_t>((frameSize + MAX_FRAGMENT_SIZE - 1) / MAX_FRAGMENT_SIZE);
 
             // 发送每个分片
@@ -556,16 +648,18 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
                 // 准备分片头
                 FragmentHeader header;
                 header.magic = htons(FRAGMENT_MAGIC);
-                header.frameId = htonl(m_frameId);            // 添加帧ID
+                header.frameId = htonl(m_frameId);
                 header.frameSize = htonl(static_cast<uint32_t>(frameSize));
                 header.totalFragments = htons(totalFragments);
                 header.fragmentIndex = htons(fragmentIndex);
                 header.fragmentSize = htons(fragmentSize);
+                header.frameType = static_cast<uint8_t>(frameType);
+                header.reserved = 0;
 
                 // 复制头和数据到发送缓冲区
                 memcpy(sendBuffer.data(), &header, sizeof(FragmentHeader));
                 memcpy(sendBuffer.data() + sizeof(FragmentHeader),
-                    jpegData.data() + offset, fragmentSize);
+                    pngData.data() + offset, fragmentSize);
 
                 // 发送分片
                 int sent = sendto(m_sendSocket, sendBuffer.data(),

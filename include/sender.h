@@ -28,8 +28,14 @@ public:
 private:
     // DXGI相关函数
     bool InitDXGIDuplication();
-    bool CaptureScreenDXGI(std::vector<BYTE>& jpegData);
-    bool CaptureScreenGDI(std::vector<BYTE>& jpegData);
+    bool CaptureScreenDXGI(std::vector<BYTE>& pngData, FrameType& frameType);
+    bool CaptureScreenGDI(std::vector<BYTE>& pngData, FrameType& frameType);
+    
+    // PNG编码函数
+    bool EncodeBitmapToPNG(Bitmap* bitmap, std::vector<BYTE>& pngData);
+    
+    // 差异检测和编码
+    bool DetectAndEncodeDelta(Bitmap* currentFrame, std::vector<BYTE>& deltaData);
     
     // 发送线程函数
     void SendThreadFunc(const std::string& multicastGroup, int port, const std::string& localInterface);
@@ -48,6 +54,15 @@ private:
     
     // 帧ID计数器
     uint32_t m_frameId = 0;
+    
+    // 关键帧计数器（每N帧发送一次关键帧）
+    uint32_t m_framesSinceKeyFrame = 0;
+    static constexpr uint32_t KEY_FRAME_INTERVAL = 30; // 每30帧发送一次关键帧
+    
+    // 上一帧数据（用于差异检测）
+    std::vector<BYTE> m_lastFrameData;
+    int m_lastFrameWidth = 0;
+    int m_lastFrameHeight = 0;
 
     // DXGI降级策略：计数连续失败次数，只在多次失败后才降级
     int m_dxgiFailureCount = 0;

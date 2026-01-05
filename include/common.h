@@ -30,6 +30,12 @@ using namespace std::chrono;
 // 协议魔数（网络字节序写入，接收端校验）
 constexpr uint16_t FRAGMENT_MAGIC = 0x5353; // "SS" ScreenShare
 
+// 帧类型枚举
+enum class FrameType : uint8_t {
+    KEY_FRAME = 0,    // 关键帧（完整PNG）
+    DELTA_FRAME = 1   // 差异帧（仅变化区域的PNG）
+};
+
 // 分片信息结构（保持紧凑布局，并保证至少2字节对齐）
 #pragma pack(push, 1)
 struct alignas(2) FragmentHeader {
@@ -39,10 +45,12 @@ struct alignas(2) FragmentHeader {
     uint16_t totalFragments; // 总片段数
     uint16_t fragmentIndex;  // 当前片段索引
     uint16_t fragmentSize;   // 当前片段大小
+    uint8_t frameType;       // 帧类型（0=关键帧, 1=差异帧）
+    uint8_t reserved;        // 保留字节（对齐）
 };
 #pragma pack(pop)
 
-static_assert(sizeof(FragmentHeader) == 16, "FragmentHeader layout mismatch");
+static_assert(sizeof(FragmentHeader) == 18, "FragmentHeader layout mismatch");
 
 const size_t MAX_FRAGMENT_SIZE = 1400; // 每个分片的最大大小
 
@@ -60,5 +68,8 @@ std::vector<NetworkAdapter> GetNetworkAdapters();
 
 // 获取JPEG编码器的CLSID（用于发送端）
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
+
+// 获取PNG编码器的CLSID
+int GetPngEncoderClsid(CLSID* pClsid);
 
 #endif // COMMON_H

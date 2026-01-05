@@ -33,6 +33,10 @@ ScreenReceiver::~ScreenReceiver() {
         DeleteObject(m_hBitmap);
         m_hBitmap = NULL;
     }
+    if (m_hKeyFrameBitmap) {
+        DeleteObject(m_hKeyFrameBitmap);
+        m_hKeyFrameBitmap = NULL;
+    }
     LeaveCriticalSection(&m_ImageCS);
 }
 
@@ -284,6 +288,10 @@ LRESULT ScreenReceiver::HandleDisplayWindowMessage(HWND hWnd, UINT message, WPAR
             DeleteObject(m_hBitmap);
             m_hBitmap = NULL;
         }
+        if (m_hKeyFrameBitmap) {
+            DeleteObject(m_hKeyFrameBitmap);
+            m_hKeyFrameBitmap = NULL;
+        }
         LeaveCriticalSection(&m_ImageCS);
 
         // 重置窗口句柄
@@ -343,12 +351,12 @@ void ScreenReceiver::ImageProcessingThread() {
         if (!m_bImageProcessing) break;
 
         if (dwWaitResult == WAIT_OBJECT_0) {
-            std::vector<BYTE> jpegData;
+            std::vector<BYTE> pngDataWithType;
 
-            // 从队列获取图像数据
+            // 从队列获取图像数据（包含帧类型信息）
             EnterCriticalSection(&m_ImageQueueCS);
             if (!m_ImageQueue.empty()) {
-                jpegData = std::move(m_ImageQueue.front());
+                pngDataWithType = std::move(m_ImageQueue.front());
                 m_ImageQueue.pop();
 
                 // 如果队列还有数据，重新设置事件
@@ -358,19 +366,23 @@ void ScreenReceiver::ImageProcessingThread() {
             }
             LeaveCriticalSection(&m_ImageQueueCS);
 
-            if (jpegData.empty()) continue;
+            if (pngDataWithType.empty()) continue;
 
-            // 从内存加载JPEG图像
+            // 提取帧类型和PNG数据
+            uint8_t frameType = pngDataWithType[0];
+            std::vector<BYTE> pngData(pngDataWithType.begin() + 1, pngDataWithType.end());
+
+            // 从内存加载PNG图像
             IStream* stream = NULL;
             HRESULT hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
             if (FAILED(hr)) {
                 continue;
             }
 
-            // 写入JPEG数据到流
+            // 写入PNG数据到流
             ULONG written = 0;
-            hr = stream->Write(jpegData.data(), static_cast<ULONG>(jpegData.size()), &written);
-            if (FAILED(hr) || written != jpegData.size()) {
+            hr = stream->Write(pngData.data(), static_cast<ULONG>(pngData.size()), &written);
+            if (FAILED(hr) || written != pngData.size()) {
                 stream->Release();
                 continue;
             }
@@ -387,17 +399,102 @@ void ScreenReceiver::ImageProcessingThread() {
                 continue;
             }
 
-            // 转换为HBITMAP
-            HBITMAP hNewBitmap = NULL;
-            Status status = bitmap.GetHBITMAP(Color(255, 255, 255), &hNewBitmap);
-            
             // 释放流（不再需要）
             stream->Release();
 
-            if (status != Ok || !hNewBitmap) {
-                // GetHBITMAP失败，继续下一个
-                continue;
+            HBITMAP hNewBitmap = NULL;
+            
+            // 根据帧类型处理
+            if (frameType == static_cast<uint8_t>(FrameType::KEY_FRAME)) {
+                // 关键帧：直接使用
+                Status status = bitmap.GetHBITMAP(Color(255, 255, 255), &hNewBitmap);
+                
+                if (status != Ok || !hNewBitmap) {
+                    continue;
+                }
+                
+                // 更新关键帧副本
+                EnterCriticalSection(&m_ImageCS);
+                if (m_hKeyFrameBitmap) {
+                    DeleteObject(m_hKeyFrameBitmap);
+                }
+                
+                // 创建关键帧副本
+                HDC hdcScreen = GetDC(NULL);
+                HDC hdcSrc = CreateCompatibleDC(hdcScreen);
+                HDC hdcDst = CreateCompatibleDC(hdcScreen);
+                
+                BITMAP bm;
+                GetObject(hNewBitmap, sizeof(BITMAP), &bm);
+                m_hKeyFrameBitmap = CreateCompatibleBitmap(hdcScreen, bm.bmWidth, bm.bmHeight);
+                
+                SelectObject(hdcSrc, hNewBitmap);
+                SelectObject(hdcDst, m_hKeyFrameBitmap);
+                
+                BitBlt(hdcDst, 0, 0, bm.bmWidth, bm.bmHeight, hdcSrc, 0, 0, SRCCOPY);
+                
+                DeleteDC(hdcDst);
+                DeleteDC(hdcSrc);
+                ReleaseDC(NULL, hdcScreen);
+                
+                LeaveCriticalSection(&m_ImageCS);
+            } else {
+                // 差异帧：需要合成到关键帧上
+                EnterCriticalSection(&m_ImageCS);
+                
+                if (!m_hKeyFrameBitmap) {
+                    // 没有关键帧，跳过
+                    LeaveCriticalSection(&m_ImageCS);
+                    continue;
+                }
+                
+                // 解析差异帧位置信息（前8像素）
+                int minX = 0, minY = 0;
+                for (int i = 0; i < 4; i++) {
+                    Color pixel;
+                    bitmap.GetPixel(i, 0, &pixel);
+                    minX |= (pixel.GetG() << (i * 8));
+                    
+                    bitmap.GetPixel(i + 4, 0, &pixel);
+                    minY |= (pixel.GetG() << (i * 8));
+                }
+                
+                // 创建新位图，复制关键帧
+                BITMAP keyBm;
+                GetObject(m_hKeyFrameBitmap, sizeof(BITMAP), &keyBm);
+                
+                HDC hdcScreen = GetDC(NULL);
+                HDC hdcKey = CreateCompatibleDC(hdcScreen);
+                HDC hdcNew = CreateCompatibleDC(hdcScreen);
+                
+                hNewBitmap = CreateCompatibleBitmap(hdcScreen, keyBm.bmWidth, keyBm.bmHeight);
+                
+                SelectObject(hdcKey, m_hKeyFrameBitmap);
+                SelectObject(hdcNew, hNewBitmap);
+                
+                // 复制关键帧内容
+                BitBlt(hdcNew, 0, 0, keyBm.bmWidth, keyBm.bmHeight, hdcKey, 0, 0, SRCCOPY);
+                
+                // 将差异区域绘制到新位图上
+                Graphics graphics(hdcNew);
+                int deltaWidth = bitmap.GetWidth() - 8;
+                int deltaHeight = bitmap.GetHeight();
+                
+                // 从位图的第8像素开始提取差异区域
+                Bitmap* deltaBitmap = bitmap.Clone(8, 0, deltaWidth, deltaHeight, PixelFormat32bppARGB);
+                if (deltaBitmap) {
+                    graphics.DrawImage(deltaBitmap, minX, minY, deltaWidth, deltaHeight);
+                    delete deltaBitmap;
+                }
+                
+                DeleteDC(hdcNew);
+                DeleteDC(hdcKey);
+                ReleaseDC(NULL, hdcScreen);
+                
+                LeaveCriticalSection(&m_ImageCS);
             }
+
+            if (!hNewBitmap) continue;
 
             // 更新全局位图
             EnterCriticalSection(&m_ImageCS);
@@ -432,6 +529,7 @@ void ScreenReceiver::ProcessFragment(const FragmentHeader& header, const BYTE* f
         newState.frameSize = header.frameSize;
         newState.totalFragments = header.totalFragments;
         newState.receivedCount = 0;
+        newState.frameType = header.frameType;
         newState.frameData.resize(header.frameSize);
         newState.fragmentsReceived.resize(header.totalFragments, false);
         newState.lastFragmentTime = steady_clock::now();
@@ -480,13 +578,19 @@ void ScreenReceiver::ProcessFragment(const FragmentHeader& header, const BYTE* f
 
     // 检查是否已接收所有分片
     if (state.receivedCount == state.totalFragments) {
-        // 将完整帧添加到图像处理队列
+        // 将完整帧添加到图像处理队列（在帧数据前添加一个字节存储帧类型）
         EnterCriticalSection(&m_ImageQueueCS);
         
         // 限制队列大小，防止内存无限增长
         const size_t MAX_QUEUE_SIZE = 10; // 最多缓存10帧
         if (m_ImageQueue.size() < MAX_QUEUE_SIZE) {
-            m_ImageQueue.push(std::move(state.frameData));
+            // 在数据前插入帧类型
+            std::vector<BYTE> frameDataWithType;
+            frameDataWithType.reserve(state.frameData.size() + 1);
+            frameDataWithType.push_back(state.frameType);
+            frameDataWithType.insert(frameDataWithType.end(), state.frameData.begin(), state.frameData.end());
+            
+            m_ImageQueue.push(std::move(frameDataWithType));
             SetEvent(m_hImageQueueEvent); // 通知有新图像数据
         }
         // 如果队列已满，丢弃该帧（避免内存泄漏）

@@ -82,3 +82,8 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
     free(pImageCodecInfo);
     return -1;
 }
+
+// 获取PNG编码器的CLSID
+int GetPngEncoderClsid(CLSID* pClsid) {
+    return GetEncoderClsid(L"image/png", pClsid);
+}

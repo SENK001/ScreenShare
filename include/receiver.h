@@ -11,6 +11,7 @@ struct FrameReassemblyState {
     uint32_t frameSize;
     uint16_t totalFragments;
     uint16_t receivedCount;
+    uint8_t frameType; // 帧类型
     steady_clock::time_point lastFragmentTime;
 };
 
@@ -84,6 +85,7 @@ private:
     
     // 图像数据
     HBITMAP m_hBitmap = NULL;
+    HBITMAP m_hKeyFrameBitmap = NULL; // 最后一个关键帧
     std::map<uint32_t, FrameReassemblyState> m_Frames; // 帧ID到重组状态的映射
     std::queue<std::vector<BYTE>> m_ImageQueue; // 图像处理队列
     
