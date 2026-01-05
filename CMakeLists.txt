@@ -21,12 +21,11 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
+file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+
 # 添加可执行文件
 add_executable(ScreenShare
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/common.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/sender.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/receiver.cpp
+    ${SRC_FILES}
     ${CMAKE_CURRENT_SOURCE_DIR}/ScreenShare.rc
 )
 
