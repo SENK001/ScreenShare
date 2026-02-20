@@ -268,7 +268,7 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
     encoderParams.Parameter[0].NumberOfValues = 1;
 
-    ULONG quality = 95;
+    ULONG quality = GetQuality();
     encoderParams.Parameter[0].Value = &quality;
 
     Status status = bitmap.Save(stream, &clsid, &encoderParams);
@@ -382,7 +382,7 @@ bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
     encoderParams.Parameter[0].NumberOfValues = 1;
 
     // 设置质量（0-100，越高质量越好但文件越大）
-    ULONG quality = 95;
+    ULONG quality = GetQuality();
     encoderParams.Parameter[0].Value = &quality;
 
     // 保存为JPEG到内存流
@@ -483,9 +483,6 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
     // 帧ID计数器
     m_frameId = 0;
 
-    // 30FPS的帧间隔（约33.3毫秒）
-    const milliseconds frameInterval(33);
-
     // 发送缓冲区
     std::vector<char> sendBuffer(sizeof(FragmentHeader) + MAX_FRAGMENT_SIZE);
 
@@ -582,6 +579,10 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
         // 计算剩余时间并等待
         auto endTime = high_resolution_clock::now();
         auto elapsed = duration_cast<milliseconds>(endTime - startTime);
+
+        // 根据当前帧率计算帧间隔
+        int currentFrameRate = GetFrameRate();
+        milliseconds frameInterval(1000 / currentFrameRate); // 转换为毫秒
 
         if (elapsed < frameInterval) {
             Sleep(static_cast<DWORD>((frameInterval - elapsed).count()));

@@ -52,13 +52,16 @@ struct NetworkAdapter {
     std::string ipAddress;
 };
 
-// 将宽字符字符串转换为多字节字符串
-std::string WCharToMByte(LPCWSTR lpcwszStr);
-
 // 获取所有网络适配器信息
 std::vector<NetworkAdapter> GetNetworkAdapters();
 
 // 获取JPEG编码器的CLSID（用于发送端）
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
+
+// 获取当前屏幕分辨率
+void GetCurrentScreenResolution(int& width, int& height);
+
+// 计算预估带宽（Mbps）
+double CalculateEstimatedBandwidth(int width, int height, int frameRate, int quality);
 
 #endif // COMMON_H

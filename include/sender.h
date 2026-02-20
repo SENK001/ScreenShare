@@ -52,6 +52,36 @@ private:
     // DXGI降级策略：计数连续失败次数，只在多次失败后才降级
     int m_dxgiFailureCount = 0;
     static constexpr int DXGI_FAILURE_THRESHOLD = 10; // 连续失败10次才降级
+
+    // 可配置参数
+    int m_quality = 95;      // JPEG质量 (0-100)
+    int m_frameRate = 30;    // 帧率 (1-60 FPS)
+    mutable std::mutex m_paramMutex; // 参数访问互斥锁
+
+public:
+    // 设置JPEG质量 (0-100)
+    void SetQuality(int quality) {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        m_quality = std::max(0, std::min(100, quality));
+    }
+
+    // 设置帧率 (1-60 FPS)
+    void SetFrameRate(int frameRate) {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        m_frameRate = std::max(1, std::min(60, frameRate));
+    }
+
+    // 获取当前质量
+    int GetQuality() const {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        return m_quality;
+    }
+
+    // 获取当前帧率
+    int GetFrameRate() const {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        return m_frameRate;
+    }
 };
 
 #endif // SENDER_H

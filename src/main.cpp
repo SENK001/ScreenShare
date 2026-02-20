@@ -39,6 +39,19 @@ HWND g_hEditRecvPort = NULL;
 HWND g_hButtonRecvStart = NULL;
 HWND g_hButtonRecvStop = NULL;
 
+// 设置页控件
+HWND g_hQualityLabel = NULL;
+HWND g_hQualityTrackbar = NULL;
+HWND g_hQualityValueLabel = NULL;
+HWND g_hFrameRateLabel = NULL;
+HWND g_hFrameRateTrackbar = NULL;
+HWND g_hFrameRateValueLabel = NULL;
+HWND g_hResolutionLabel = NULL;
+HWND g_hResolutionValueLabel = NULL;
+HWND g_hBandwidthLabel = NULL;
+HWND g_hBandwidthValueLabel = NULL;
+HWND g_hApplySettingsButton = NULL;
+
 // 窗口过程函数
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -139,6 +152,9 @@ void CreateControls(HWND hWnd) {
     tie.pszText = (LPWSTR)L"接收屏幕";
     TabCtrl_InsertItem(g_hTabControl, 1, &tie);
     
+    tie.pszText = (LPWSTR)L"设置";
+    TabCtrl_InsertItem(g_hTabControl, 2, &tie);
+    
     // 获取标签内容区域
     RECT rcTab;
     GetClientRect(g_hTabControl, &rcTab);
@@ -231,6 +247,111 @@ void CreateControls(HWND hWnd) {
     ShowWindow(g_hEditRecvPort, SW_HIDE);
     ShowWindow(g_hButtonRecvStart, SW_HIDE);
     ShowWindow(g_hButtonRecvStop, SW_HIDE);
+    
+    // ========== 设置控制面板 ==========
+    
+    // 图片质量设置
+    g_hQualityLabel = CreateWindow(L"STATIC", L"图片质量：", WS_CHILD | SS_LEFT,
+        tabLeft, tabTop, ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    g_hQualityTrackbar = CreateWindow(TRACKBAR_CLASS, L"", WS_CHILD | TBS_HORZ | TBS_AUTOTICKS,
+        tabLeft + ScaleDPI(110), tabTop, tabWidth - ScaleDPI(160), ScaleDPI(30), hWnd, NULL, NULL, NULL);
+    g_hQualityValueLabel = CreateWindow(L"STATIC", L"95", WS_CHILD | SS_LEFT,
+        tabLeft + tabWidth - ScaleDPI(40), tabTop, ScaleDPI(40), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    
+    // 设置质量滑块范围 (0-100)
+    SendMessage(g_hQualityTrackbar, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+    SendMessage(g_hQualityTrackbar, TBM_SETPOS, TRUE, 95);
+    SendMessage(g_hQualityTrackbar, TBM_SETTICFREQ, 10, 0);
+    
+    // 帧率设置
+    g_hFrameRateLabel = CreateWindow(L"STATIC", L"帧率 (FPS)：", WS_CHILD | SS_LEFT,
+        tabLeft, tabTop + ScaleDPI(40), ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    g_hFrameRateTrackbar = CreateWindow(TRACKBAR_CLASS, L"", WS_CHILD | TBS_HORZ | TBS_AUTOTICKS,
+        tabLeft + ScaleDPI(110), tabTop + ScaleDPI(40), tabWidth - ScaleDPI(160), ScaleDPI(30), hWnd, NULL, NULL, NULL);
+    g_hFrameRateValueLabel = CreateWindow(L"STATIC", L"30", WS_CHILD | SS_LEFT,
+        tabLeft + tabWidth - ScaleDPI(40), tabTop + ScaleDPI(40), ScaleDPI(40), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    
+    // 设置帧率滑块范围 (1-60)
+    SendMessage(g_hFrameRateTrackbar, TBM_SETRANGE, TRUE, MAKELONG(1, 60));
+    SendMessage(g_hFrameRateTrackbar, TBM_SETPOS, TRUE, 30);
+    SendMessage(g_hFrameRateTrackbar, TBM_SETTICFREQ, 5, 0);
+    
+    // 分辨率显示
+    g_hResolutionLabel = CreateWindow(L"STATIC", L"当前分辨率：", WS_CHILD | SS_LEFT,
+        tabLeft, tabTop + ScaleDPI(80), ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    wchar_t resolutionText[64];
+    swprintf_s(resolutionText, L"%d × %d", screenWidth, screenHeight);
+    g_hResolutionValueLabel = CreateWindow(L"STATIC", resolutionText, WS_CHILD | SS_LEFT,
+        tabLeft + ScaleDPI(110), tabTop + ScaleDPI(80), tabWidth - ScaleDPI(110), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    
+    // 带宽预估显示
+    g_hBandwidthLabel = CreateWindow(L"STATIC", L"预计带宽：", WS_CHILD | SS_LEFT,
+        tabLeft, tabTop + ScaleDPI(110), ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    
+    // 计算初始带宽
+    double bandwidth = CalculateEstimatedBandwidth(screenWidth, screenHeight, 30, 95);
+    wchar_t bandwidthText[64];
+    swprintf_s(bandwidthText, L"%.1f Mbps", bandwidth);
+    g_hBandwidthValueLabel = CreateWindow(L"STATIC", bandwidthText, WS_CHILD | SS_LEFT,
+        tabLeft + ScaleDPI(110), tabTop + ScaleDPI(110), tabWidth - ScaleDPI(110), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    
+    // 应用设置按钮
+    g_hApplySettingsButton = CreateWindow(L"BUTTON", L"应用设置", WS_CHILD | BS_PUSHBUTTON,
+        tabLeft + ScaleDPI(110), tabTop + ScaleDPI(140), ScaleDPI(120), ScaleDPI(32), hWnd, (HMENU)5, NULL, NULL);
+    
+    // 设置设置控件字体
+    SendMessage(g_hQualityLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hQualityTrackbar, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hQualityValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hFrameRateLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hFrameRateTrackbar, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hFrameRateValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hResolutionLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hResolutionValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hBandwidthLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hBandwidthValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hApplySettingsButton, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    
+    // 默认隐藏设置页面
+    ShowWindow(g_hQualityLabel, SW_HIDE);
+    ShowWindow(g_hQualityTrackbar, SW_HIDE);
+    ShowWindow(g_hQualityValueLabel, SW_HIDE);
+    ShowWindow(g_hFrameRateLabel, SW_HIDE);
+    ShowWindow(g_hFrameRateTrackbar, SW_HIDE);
+    ShowWindow(g_hFrameRateValueLabel, SW_HIDE);
+    ShowWindow(g_hResolutionLabel, SW_HIDE);
+    ShowWindow(g_hResolutionValueLabel, SW_HIDE);
+    ShowWindow(g_hBandwidthLabel, SW_HIDE);
+    ShowWindow(g_hBandwidthValueLabel, SW_HIDE);
+    ShowWindow(g_hApplySettingsButton, SW_HIDE);
+}
+
+// 更新带宽预估
+void UpdateBandwidthEstimation() {
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    
+    int quality = SendMessage(g_hQualityTrackbar, TBM_GETPOS, 0, 0);
+    int frameRate = SendMessage(g_hFrameRateTrackbar, TBM_GETPOS, 0, 0);
+    
+    double bandwidth = CalculateEstimatedBandwidth(screenWidth, screenHeight, frameRate, quality);
+    wchar_t bandwidthText[64];
+    swprintf_s(bandwidthText, L"%.1f Mbps", bandwidth);
+    SetWindowText(g_hBandwidthValueLabel, bandwidthText);
+}
+
+// 应用设置
+void ApplySettings() {
+    int quality = SendMessage(g_hQualityTrackbar, TBM_GETPOS, 0, 0);
+    int frameRate = SendMessage(g_hFrameRateTrackbar, TBM_GETPOS, 0, 0);
+    
+    g_sender.SetQuality(quality);
+    g_sender.SetFrameRate(frameRate);
+    
+    MessageBox(g_hWnd, L"设置已应用", L"成功", MB_ICONINFORMATION);
 }
 
 // 填充网络适配器到组合框
@@ -437,6 +558,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_hButtonRecvStop
             };
             
+            // 设置页面的所有控件
+            HWND settingsControls[] = {
+                g_hQualityLabel,
+                g_hQualityTrackbar,
+                g_hQualityValueLabel,
+                g_hFrameRateLabel,
+                g_hFrameRateTrackbar,
+                g_hFrameRateValueLabel,
+                g_hResolutionLabel,
+                g_hResolutionValueLabel,
+                g_hBandwidthLabel,
+                g_hBandwidthValueLabel,
+                g_hApplySettingsButton
+            };
+            
             if (iPage == 0) {
                 // 显示发送页面
                 for (HWND hwnd : sendControls) {
@@ -444,6 +580,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
                 // 隐藏接收页面
                 for (HWND hwnd : recvControls) {
+                    if (hwnd) ShowWindow(hwnd, SW_HIDE);
+                }
+                // 隐藏设置页面
+                for (HWND hwnd : settingsControls) {
                     if (hwnd) ShowWindow(hwnd, SW_HIDE);
                 }
             } else if (iPage == 1) {
@@ -455,7 +595,49 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 for (HWND hwnd : recvControls) {
                     if (hwnd) ShowWindow(hwnd, SW_SHOW);
                 }
+                // 隐藏设置页面
+                for (HWND hwnd : settingsControls) {
+                    if (hwnd) ShowWindow(hwnd, SW_HIDE);
+                }
+            } else if (iPage == 2) {
+                // 隐藏发送页面
+                for (HWND hwnd : sendControls) {
+                    if (hwnd) ShowWindow(hwnd, SW_HIDE);
+                }
+                // 隐藏接收页面
+                for (HWND hwnd : recvControls) {
+                    if (hwnd) ShowWindow(hwnd, SW_HIDE);
+                }
+                // 显示设置页面
+                for (HWND hwnd : settingsControls) {
+                    if (hwnd) ShowWindow(hwnd, SW_SHOW);
+                }
             }
+        }
+        break;
+    }
+    case WM_HSCROLL: {
+        // 处理滑块滚动事件
+        HWND hTrackbar = (HWND)lParam;
+        
+        if (hTrackbar == g_hQualityTrackbar) {
+            // 更新质量值显示
+            int quality = SendMessage(g_hQualityTrackbar, TBM_GETPOS, 0, 0);
+            wchar_t qualityText[16];
+            swprintf_s(qualityText, L"%d", quality);
+            SetWindowText(g_hQualityValueLabel, qualityText);
+            
+            // 更新带宽预估
+            UpdateBandwidthEstimation();
+        } else if (hTrackbar == g_hFrameRateTrackbar) {
+            // 更新帧率值显示
+            int frameRate = SendMessage(g_hFrameRateTrackbar, TBM_GETPOS, 0, 0);
+            wchar_t frameRateText[16];
+            swprintf_s(frameRateText, L"%d", frameRate);
+            SetWindowText(g_hFrameRateValueLabel, frameRateText);
+            
+            // 更新带宽预估
+            UpdateBandwidthEstimation();
         }
         break;
     }
@@ -474,6 +656,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         case 4: // 停止接收按钮
             StopReceiving();
+            break;
+        case 5: // 应用设置按钮
+            ApplySettings();
             break;
         }
         break;
