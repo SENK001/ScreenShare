@@ -15,11 +15,6 @@
 #include <queue>
 #include <codecvt>
 
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "iphlpapi.lib")
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "gdiplus.lib")
-
 using namespace Gdiplus;
 using namespace std::chrono;
 

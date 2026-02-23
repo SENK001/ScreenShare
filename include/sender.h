@@ -7,9 +7,6 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
-
 // 发送器类
 class ScreenSender {
 public:

@@ -4,8 +4,6 @@
 #include "resource.h"
 #include <commctrl.h>
 
-#pragma comment(lib, "comctl32.lib")
-
 // 全局变量
 ScreenSender g_sender;
 ScreenReceiver g_receiver;
