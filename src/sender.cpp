@@ -355,6 +355,129 @@ bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
     // 使用GDI+将位图转换为JPEG
     Bitmap bitmap(hBitmap, NULL);
 
+    // 检查是否需要缩放分辨率
+    int targetWidth, targetHeight;
+    GetResolution(targetWidth, targetHeight);
+    
+    if (targetWidth > 0 && targetHeight > 0 && 
+        (targetWidth != screenWidth || targetHeight != screenHeight)) {
+        // 创建目标位图
+        Bitmap* pScaledBitmap = new Bitmap(targetWidth, targetHeight, PixelFormat32bppARGB);
+        Graphics graphics(pScaledBitmap);
+        
+        // 设置高质量插值模式
+        graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+        graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+        
+        // 计算缩放比例，保持宽高比
+        float scaleX = (float)targetWidth / screenWidth;
+        float scaleY = (float)targetHeight / screenHeight;
+        float scale = std::min(scaleX, scaleY);
+        
+        int scaledWidth = (int)(screenWidth * scale);
+        int scaledHeight = (int)(screenHeight * scale);
+        
+        // 计算居中位置
+        int offsetX = (targetWidth - scaledWidth) / 2;
+        int offsetY = (targetHeight - scaledHeight) / 2;
+        
+        // 绘制缩放后的图像
+        graphics.DrawImage(&bitmap, offsetX, offsetY, scaledWidth, scaledHeight);
+        
+        // 使用缩放后的位图
+        // 注意：Bitmap的赋值操作符和拷贝构造函数都是私有的
+        // 所以我们需要直接使用pScaledBitmap进行编码
+        // 保存原始位图以便清理
+        Bitmap* pOriginalBitmap = &bitmap;
+        
+        // 编码为JPEG
+        IStream* stream = NULL;
+        hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
+        if (FAILED(hr) || !stream) {
+            DeleteObject(hBitmap);
+            DeleteDC(hdcMem);
+            ReleaseDC(NULL, hdcScreen);
+            delete pScaledBitmap;
+            return false;
+        }
+
+        CLSID clsid;
+        if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
+            stream->Release();
+            DeleteObject(hBitmap);
+            DeleteDC(hdcMem);
+            ReleaseDC(NULL, hdcScreen);
+            delete pScaledBitmap;
+            return false;
+        }
+
+        EncoderParameters encoderParams;
+        encoderParams.Count = 1;
+        encoderParams.Parameter[0].Guid = EncoderQuality;
+        encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
+        encoderParams.Parameter[0].NumberOfValues = 1;
+
+        ULONG quality = GetQuality();
+        encoderParams.Parameter[0].Value = &quality;
+
+        Status status = pScaledBitmap->Save(stream, &clsid, &encoderParams);
+        if (status != Ok) {
+            stream->Release();
+            DeleteObject(hBitmap);
+            DeleteDC(hdcMem);
+            ReleaseDC(NULL, hdcScreen);
+            delete pScaledBitmap;
+            return false;
+        }
+
+        // 获取流数据
+        STATSTG stats;
+        hr = stream->Stat(&stats, STATFLAG_NONAME);
+        if (FAILED(hr)) {
+            stream->Release();
+            DeleteObject(hBitmap);
+            DeleteDC(hdcMem);
+            ReleaseDC(NULL, hdcScreen);
+            delete pScaledBitmap;
+            return false;
+        }
+        DWORD streamSize = stats.cbSize.LowPart;
+
+        HGLOBAL hGlobal = NULL;
+        hr = GetHGlobalFromStream(stream, &hGlobal);
+        if (FAILED(hr) || !hGlobal) {
+            stream->Release();
+            DeleteObject(hBitmap);
+            DeleteDC(hdcMem);
+            ReleaseDC(NULL, hdcScreen);
+            delete pScaledBitmap;
+            return false;
+        }
+
+        BYTE* pData = (BYTE*)GlobalLock(hGlobal);
+        if (!pData) {
+            stream->Release();
+            DeleteObject(hBitmap);
+            DeleteDC(hdcMem);
+            ReleaseDC(NULL, hdcScreen);
+            delete pScaledBitmap;
+            return false;
+        }
+
+        jpegData.resize(streamSize);
+        memcpy(jpegData.data(), pData, streamSize);
+
+        GlobalUnlock(hGlobal);
+        stream->Release();
+        delete pScaledBitmap;
+        
+        // 清理原始资源
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return true;
+    }
+
     // 创建内存流
     IStream* stream = NULL;
     hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);

@@ -53,6 +53,8 @@ private:
     // 可配置参数
     int m_quality = 95;      // JPEG质量 (0-100)
     int m_frameRate = 30;    // 帧率 (1-60 FPS)
+    int m_resolutionWidth = 0;  // 分辨率宽度 (0表示使用屏幕分辨率)
+    int m_resolutionHeight = 0; // 分辨率高度 (0表示使用屏幕分辨率)
     mutable std::mutex m_paramMutex; // 参数访问互斥锁
 
 public:
@@ -68,6 +70,13 @@ public:
         m_frameRate = std::max(1, std::min(60, frameRate));
     }
 
+    // 设置分辨率 (0表示使用屏幕分辨率)
+    void SetResolution(int width, int height) {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        m_resolutionWidth = std::max(0, width);
+        m_resolutionHeight = std::max(0, height);
+    }
+
     // 获取当前质量
     int GetQuality() const {
         std::lock_guard<std::mutex> lock(m_paramMutex);
@@ -78,6 +87,13 @@ public:
     int GetFrameRate() const {
         std::lock_guard<std::mutex> lock(m_paramMutex);
         return m_frameRate;
+    }
+
+    // 获取当前分辨率
+    void GetResolution(int& width, int& height) const {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        width = m_resolutionWidth;
+        height = m_resolutionHeight;
     }
 };
 

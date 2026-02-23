@@ -45,10 +45,26 @@ HWND g_hFrameRateLabel = NULL;
 HWND g_hFrameRateTrackbar = NULL;
 HWND g_hFrameRateValueLabel = NULL;
 HWND g_hResolutionLabel = NULL;
-HWND g_hResolutionValueLabel = NULL;
+HWND g_hComboBoxResolution = NULL;
 HWND g_hBandwidthLabel = NULL;
 HWND g_hBandwidthValueLabel = NULL;
 HWND g_hApplySettingsButton = NULL;
+
+// 分辨率选项结构
+struct ResolutionOption {
+    const wchar_t* name;
+    int width;
+    int height;
+};
+
+// 预设分辨率选项（最大1080P）
+ResolutionOption g_resolutions[] = {
+    {L"1080P (1920×1080)", 1920, 1080},
+    {L"720P (1280×720)", 1280, 720},
+    {L"480P (854×480)", 854, 480},
+    {L"360P (640×360)", 640, 360}
+};
+const int g_numResolutions = sizeof(g_resolutions) / sizeof(g_resolutions[0]);
 
 // 窗口过程函数
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -274,16 +290,31 @@ void CreateControls(HWND hWnd) {
     SendMessage(g_hFrameRateTrackbar, TBM_SETPOS, TRUE, 30);
     SendMessage(g_hFrameRateTrackbar, TBM_SETTICFREQ, 5, 0);
     
-    // 分辨率显示
-    g_hResolutionLabel = CreateWindow(L"STATIC", L"当前分辨率：", WS_CHILD | SS_LEFT,
+    // 分辨率选择
+    g_hResolutionLabel = CreateWindow(L"STATIC", L"分辨率：", WS_CHILD | SS_LEFT,
         tabLeft, tabTop + ScaleDPI(80), ScaleDPI(100), ScaleDPI(20), hWnd, NULL, NULL, NULL);
     
+    g_hComboBoxResolution = CreateWindow(L"COMBOBOX", L"", WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
+        tabLeft + ScaleDPI(110), tabTop + ScaleDPI(80), tabWidth - ScaleDPI(110), ScaleDPI(200), hWnd, NULL, NULL, NULL);
+    
+    // 填充分辨率选项
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    wchar_t resolutionText[64];
-    swprintf_s(resolutionText, L"%d × %d", screenWidth, screenHeight);
-    g_hResolutionValueLabel = CreateWindow(L"STATIC", resolutionText, WS_CHILD | SS_LEFT,
-        tabLeft + ScaleDPI(110), tabTop + ScaleDPI(80), tabWidth - ScaleDPI(110), ScaleDPI(20), hWnd, NULL, NULL, NULL);
+    int defaultResolutionIndex = 0;
+    
+    for (int i = 0; i < g_numResolutions; i++) {
+        SendMessage(g_hComboBoxResolution, CB_ADDSTRING, 0, (LPARAM)g_resolutions[i].name);
+        
+        // 选择最接近当前屏幕分辨率但不超过1080P的选项作为默认
+        if (g_resolutions[i].width <= screenWidth && g_resolutions[i].height <= screenHeight) {
+            if (i == 0 || g_resolutions[i].width > g_resolutions[defaultResolutionIndex].width) {
+                defaultResolutionIndex = i;
+            }
+        }
+    }
+    
+    // 设置默认选择
+    SendMessage(g_hComboBoxResolution, CB_SETCURSEL, defaultResolutionIndex, 0);
     
     // 带宽预估显示
     g_hBandwidthLabel = CreateWindow(L"STATIC", L"预计带宽：", WS_CHILD | SS_LEFT,
@@ -308,7 +339,7 @@ void CreateControls(HWND hWnd) {
     SendMessage(g_hFrameRateTrackbar, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
     SendMessage(g_hFrameRateValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
     SendMessage(g_hResolutionLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
-    SendMessage(g_hResolutionValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
+    SendMessage(g_hComboBoxResolution, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
     SendMessage(g_hBandwidthLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
     SendMessage(g_hBandwidthValueLabel, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
     SendMessage(g_hApplySettingsButton, WM_SETFONT, (WPARAM)g_hDefaultFont, TRUE);
@@ -321,7 +352,7 @@ void CreateControls(HWND hWnd) {
     ShowWindow(g_hFrameRateTrackbar, SW_HIDE);
     ShowWindow(g_hFrameRateValueLabel, SW_HIDE);
     ShowWindow(g_hResolutionLabel, SW_HIDE);
-    ShowWindow(g_hResolutionValueLabel, SW_HIDE);
+    ShowWindow(g_hComboBoxResolution, SW_HIDE);
     ShowWindow(g_hBandwidthLabel, SW_HIDE);
     ShowWindow(g_hBandwidthValueLabel, SW_HIDE);
     ShowWindow(g_hApplySettingsButton, SW_HIDE);
@@ -329,13 +360,22 @@ void CreateControls(HWND hWnd) {
 
 // 更新带宽预估
 void UpdateBandwidthEstimation() {
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int selectedResolutionIndex = SendMessage(g_hComboBoxResolution, CB_GETCURSEL, 0, 0);
+    int width, height;
+    
+    if (selectedResolutionIndex >= 0 && selectedResolutionIndex < g_numResolutions) {
+        width = g_resolutions[selectedResolutionIndex].width;
+        height = g_resolutions[selectedResolutionIndex].height;
+    } else {
+        // 如果未选择或选择无效，使用屏幕分辨率
+        width = GetSystemMetrics(SM_CXSCREEN);
+        height = GetSystemMetrics(SM_CYSCREEN);
+    }
     
     int quality = SendMessage(g_hQualityTrackbar, TBM_GETPOS, 0, 0);
     int frameRate = SendMessage(g_hFrameRateTrackbar, TBM_GETPOS, 0, 0);
     
-    double bandwidth = CalculateEstimatedBandwidth(screenWidth, screenHeight, frameRate, quality);
+    double bandwidth = CalculateEstimatedBandwidth(width, height, frameRate, quality);
     wchar_t bandwidthText[64];
     swprintf_s(bandwidthText, L"%.1f Mbps", bandwidth);
     SetWindowText(g_hBandwidthValueLabel, bandwidthText);
@@ -345,6 +385,17 @@ void UpdateBandwidthEstimation() {
 void ApplySettings() {
     int quality = SendMessage(g_hQualityTrackbar, TBM_GETPOS, 0, 0);
     int frameRate = SendMessage(g_hFrameRateTrackbar, TBM_GETPOS, 0, 0);
+    
+    // 获取选择的分辨率
+    int selectedResolutionIndex = SendMessage(g_hComboBoxResolution, CB_GETCURSEL, 0, 0);
+    if (selectedResolutionIndex >= 0 && selectedResolutionIndex < g_numResolutions) {
+        int width = g_resolutions[selectedResolutionIndex].width;
+        int height = g_resolutions[selectedResolutionIndex].height;
+        g_sender.SetResolution(width, height);
+    } else {
+        // 如果未选择或选择无效，使用屏幕分辨率
+        g_sender.SetResolution(0, 0);
+    }
     
     g_sender.SetQuality(quality);
     g_sender.SetFrameRate(frameRate);
@@ -565,7 +616,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_hFrameRateTrackbar,
                 g_hFrameRateValueLabel,
                 g_hResolutionLabel,
-                g_hResolutionValueLabel,
+                g_hComboBoxResolution,
                 g_hBandwidthLabel,
                 g_hBandwidthValueLabel,
                 g_hApplySettingsButton
@@ -641,6 +692,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_COMMAND: {
         int wmId = LOWORD(wParam);
+        int wmEvent = HIWORD(wParam);
+        
+        // 处理组合框选择变化事件
+        if (wmEvent == CBN_SELCHANGE) {
+            HWND hComboBox = (HWND)lParam;
+            if (hComboBox == g_hComboBoxResolution) {
+                // 分辨率选择变化时更新带宽预估
+                UpdateBandwidthEstimation();
+            }
+        }
         
         switch (wmId) {
         case 1: // 开始发送按钮
