@@ -4,8 +4,56 @@
 #include "common.h"
 #include <thread>
 #include <mutex>
+#include <condition_variable>
+#include <queue>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <chrono>
+
+// 高精度计时器类
+class HighResolutionTimer {
+public:
+    HighResolutionTimer();
+    void Reset();
+    double GetElapsedSeconds() const;
+    uint64_t GetElapsedMicroseconds() const;
+    uint64_t GetFrequency() const { return m_frequency; }
+
+private:
+    uint64_t m_frequency;
+    uint64_t m_startTime;
+};
+
+// 帧数据结构
+struct CapturedFrame {
+    std::vector<BYTE> jpegData;
+    uint32_t frameId;
+    std::chrono::high_resolution_clock::time_point timestamp;
+};
+
+// 线程安全的帧缓存队列（最多2帧以减少延迟）
+class FrameQueue {
+public:
+    FrameQueue(size_t maxSize = 2);
+    
+    // 推送帧，如果队列满则丢弃最旧的帧
+    void Push(const CapturedFrame& frame);
+    
+    // 尝试弹出帧
+    bool TryPop(CapturedFrame& frame);
+    
+    // 获取队列大小
+    size_t Size() const;
+    
+    // 清空队列
+    void Clear();
+
+private:
+    std::queue<CapturedFrame> m_queue;
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    size_t m_maxSize;
+};
 
 // 发送器类
 class ScreenSender {
@@ -26,7 +74,9 @@ private:
     // DXGI相关函数
     bool InitDXGIDuplication();
     bool CaptureScreenDXGI(std::vector<BYTE>& jpegData);
-    bool CaptureScreenGDI(std::vector<BYTE>& jpegData);
+    
+    // 捕获线程函数
+    void CaptureThreadFunc();
     
     // 发送线程函数
     void SendThreadFunc(const std::string& multicastGroup, int port, const std::string& localInterface);
@@ -37,18 +87,19 @@ private:
     IDXGIOutputDuplication* m_deskDupl = nullptr;
     ID3D11Texture2D* m_stagingTexture = nullptr;
     RECT m_outputRect = { 0 };
+    HANDLE m_frameAvailableEvent = nullptr;
 
     // 发送状态
     bool m_bSending = false;
+    std::thread m_captureThread;
     std::thread m_sendThread;
     SOCKET m_sendSocket = INVALID_SOCKET;
     
+    // 帧缓存队列
+    FrameQueue m_frameQueue;
+    
     // 帧ID计数器
     uint32_t m_frameId = 0;
-
-    // DXGI降级策略：计数连续失败次数，只在多次失败后才降级
-    int m_dxgiFailureCount = 0;
-    static constexpr int DXGI_FAILURE_THRESHOLD = 10; // 连续失败10次才降级
 
     // 可配置参数
     int m_quality = 95;      // JPEG质量 (0-100)

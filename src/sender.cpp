@@ -1,8 +1,77 @@
 #include "sender.h"
 #include <chrono>
+#include <algorithm>
 
 using namespace std::chrono;
 
+// ==================== HighResolutionTimer ====================
+HighResolutionTimer::HighResolutionTimer() {
+    LARGE_INTEGER freq;
+    QueryPerformanceFrequency(&freq);
+    m_frequency = static_cast<uint64_t>(freq.QuadPart);
+    Reset();
+}
+
+void HighResolutionTimer::Reset() {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    m_startTime = static_cast<uint64_t>(now.QuadPart);
+}
+
+double HighResolutionTimer::GetElapsedSeconds() const {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    uint64_t currentTime = static_cast<uint64_t>(now.QuadPart);
+    return static_cast<double>(currentTime - m_startTime) / m_frequency;
+}
+
+uint64_t HighResolutionTimer::GetElapsedMicroseconds() const {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    uint64_t currentTime = static_cast<uint64_t>(now.QuadPart);
+    return ((currentTime - m_startTime) * 1000000) / m_frequency;
+}
+
+// ==================== FrameQueue ====================
+FrameQueue::FrameQueue(size_t maxSize) : m_maxSize(maxSize) {}
+
+void FrameQueue::Push(const CapturedFrame& frame) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 如果队列满，移除最旧的帧
+    if (m_queue.size() >= m_maxSize) {
+        m_queue.pop();
+    }
+    
+    m_queue.push(frame);
+    m_cv.notify_one();
+}
+
+bool FrameQueue::TryPop(CapturedFrame& frame) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_queue.empty()) {
+        return false;
+    }
+    
+    frame = m_queue.front();
+    m_queue.pop();
+    return true;
+}
+
+size_t FrameQueue::Size() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_queue.size();
+}
+
+void FrameQueue::Clear() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    while (!m_queue.empty()) {
+        m_queue.pop();
+    }
+}
+
+// ==================== ScreenSender ====================
 ScreenSender::ScreenSender() {
     // 构造函数
 }
@@ -17,6 +86,12 @@ bool ScreenSender::Start(const std::string& multicastGroup, int port, const std:
     }
 
     m_bSending = true;
+    m_frameId = 0;
+    
+    // 启动捕获线程
+    m_captureThread = std::thread(&ScreenSender::CaptureThreadFunc, this);
+    
+    // 启动发送线程
     m_sendThread = std::thread(&ScreenSender::SendThreadFunc, this, multicastGroup, port, localInterface);
     return true;
 }
@@ -34,12 +109,21 @@ void ScreenSender::Stop() {
         m_sendSocket = INVALID_SOCKET;
     }
 
-    // 等待线程结束
+    // 等待捕获线程结束
+    if (m_captureThread.joinable()) {
+        m_captureThread.join();
+    }
+
+    // 等待发送线程结束
     if (m_sendThread.joinable()) {
         m_sendThread.join();
     }
 
     // 清理DXGI资源
+    if (m_frameAvailableEvent) {
+        CloseHandle(m_frameAvailableEvent);
+        m_frameAvailableEvent = nullptr;
+    }
     if (m_stagingTexture) {
         m_stagingTexture->Release();
         m_stagingTexture = nullptr;
@@ -56,9 +140,9 @@ void ScreenSender::Stop() {
         m_d3dDevice->Release();
         m_d3dDevice = nullptr;
     }
-
-    // 重置失败计数器
-    m_dxgiFailureCount = 0;
+    
+    // 清空帧队列
+    m_frameQueue.Clear();
 }
 
 bool ScreenSender::InitDXGIDuplication() {
@@ -116,7 +200,7 @@ bool ScreenSender::InitDXGIDuplication() {
         return false;
     }
 
-    // 获取DXGI输出1 - 关键修复：使用 IDXGIOutput1 而不是变量名 dxgiOutput1
+    // 获取DXGI输出1
     IDXGIOutput1* dxgiOutput1 = nullptr;
     hr = dxgiOutput->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(&dxgiOutput1));
     dxgiOutput->Release();
@@ -179,8 +263,12 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     IDXGIResource* desktopResource = nullptr;
     DXGI_OUTDUPL_FRAME_INFO frameInfo;
 
-    // 获取帧
+    // 获取帧（使用0超时立即返回）
     HRESULT hr = m_deskDupl->AcquireNextFrame(0, &frameInfo, &desktopResource);
+    if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
+        // 没有新帧，这是正常情况
+        return false;
+    }
     if (FAILED(hr)) {
         return false;
     }
@@ -209,9 +297,6 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     if (FAILED(hr)) {
         return false;
     }
-
-    // 标记需要Unmap
-    bool bMapped = true;
 
     // 创建GDI+位图
     Bitmap bitmap(outputDuplDesc.ModeDesc.Width,
@@ -251,14 +336,14 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     IStream* stream = NULL;
     hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
     if (FAILED(hr) || !stream) {
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        m_d3dContext->Unmap(m_stagingTexture, 0);
         return false;
     }
 
     CLSID clsid;
     if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
         stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        m_d3dContext->Unmap(m_stagingTexture, 0);
         return false;
     }
 
@@ -274,7 +359,7 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     Status status = bitmap.Save(stream, &clsid, &encoderParams);
     if (status != Ok) {
         stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        m_d3dContext->Unmap(m_stagingTexture, 0);
         return false;
     }
 
@@ -283,7 +368,7 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     hr = stream->Stat(&stats, STATFLAG_NONAME);
     if (FAILED(hr)) {
         stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        m_d3dContext->Unmap(m_stagingTexture, 0);
         return false;
     }
     DWORD streamSize = stats.cbSize.LowPart;
@@ -292,14 +377,14 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
     hr = GetHGlobalFromStream(stream, &hGlobal);
     if (FAILED(hr) || !hGlobal) {
         stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        m_d3dContext->Unmap(m_stagingTexture, 0);
         return false;
     }
 
     BYTE* pData = (BYTE*)GlobalLock(hGlobal);
     if (!pData) {
         stream->Release();
-        if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+        m_d3dContext->Unmap(m_stagingTexture, 0);
         return false;
     }
 
@@ -308,259 +393,53 @@ bool ScreenSender::CaptureScreenDXGI(std::vector<BYTE>& jpegData) {
 
     GlobalUnlock(hGlobal);
     stream->Release();
-    if (bMapped) m_d3dContext->Unmap(m_stagingTexture, 0);
+    m_d3dContext->Unmap(m_stagingTexture, 0);
 
     return true;
 }
 
-bool ScreenSender::CaptureScreenGDI(std::vector<BYTE>& jpegData) {
-    HRESULT hr; // 用于错误检查
-    HDC hdcScreen = GetDC(NULL);
-    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+// 捕获线程函数：持续捕获屏幕并将帧存放在队列中
+void ScreenSender::CaptureThreadFunc() {
+    // 初始化DXGI
+    if (!InitDXGIDuplication()) {
+        return;
+    }
 
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    // 性能统计变量
+    uint32_t framesCaptured = 0;
+    HighResolutionTimer statsTimer;
+    statsTimer.Reset();
 
-    HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, screenWidth, screenHeight);
-    SelectObject(hdcMem, hBitmap);
-
-    // 使用BitBlt而不是PrintWindow，减少闪烁
-    BitBlt(hdcMem, 0, 0, screenWidth, screenHeight, hdcScreen, 0, 0, SRCCOPY);
-
-    // 绘制鼠标光标
-    CURSORINFO cursorInfo = { 0 };
-    cursorInfo.cbSize = sizeof(cursorInfo);
-    if (GetCursorInfo(&cursorInfo) && (cursorInfo.flags & CURSOR_SHOWING)) {
-        // 获取光标图标
-        ICONINFO iconInfo = { 0 };
-        if (GetIconInfo(cursorInfo.hCursor, &iconInfo)) {
-            // 使用RAII确保资源释放
-            struct IconInfoCleanup {
-                ICONINFO& info;
-                ~IconInfoCleanup() {
-                    if (info.hbmMask) DeleteObject(info.hbmMask);
-                    if (info.hbmColor) DeleteObject(info.hbmColor);
-                }
-            } cleanup{ iconInfo };
-
-            // 计算光标位置（调整热点偏移）
-            int x = cursorInfo.ptScreenPos.x - iconInfo.xHotspot;
-            int y = cursorInfo.ptScreenPos.y - iconInfo.yHotspot;
-
-            // 绘制光标
-            DrawIconEx(hdcMem, x, y, cursorInfo.hCursor, 0, 0, 0, NULL, DI_NORMAL);
+    while (m_bSending) {
+        std::vector<BYTE> jpegData;
+        
+        // 尝试捕获屏幕
+        if (CaptureScreenDXGI(jpegData)) {
+            // 创建帧对象
+            CapturedFrame frame;
+            frame.jpegData = std::move(jpegData);
+            frame.frameId = ++m_frameId;
+            frame.timestamp = high_resolution_clock::now();
+            
+            // 将帧推送到队列（如果队列满会自动丢弃最旧的帧）
+            m_frameQueue.Push(frame);
+            
+            // 更新性能统计
+            framesCaptured++;
+            
+            // 每秒输出一次捕获帧率统计
+            if (statsTimer.GetElapsedSeconds() >= 1.0) {
+                double captureFPS = framesCaptured / statsTimer.GetElapsedSeconds();
+                // 调试输出：实际捕获帧率
+                // printf("捕获帧率: %.1f FPS\n", captureFPS);
+                framesCaptured = 0;
+                statsTimer.Reset();
+            }
+        } else {
+            // 没有新帧时短暂等待，避免CPU占用过高
+            Sleep(1);
         }
     }
-
-    // 使用GDI+将位图转换为JPEG
-    Bitmap bitmap(hBitmap, NULL);
-
-    // 检查是否需要缩放分辨率
-    int targetWidth, targetHeight;
-    GetResolution(targetWidth, targetHeight);
-    
-    if (targetWidth > 0 && targetHeight > 0 && 
-        (targetWidth != screenWidth || targetHeight != screenHeight)) {
-        // 创建目标位图
-        Bitmap* pScaledBitmap = new Bitmap(targetWidth, targetHeight, PixelFormat32bppARGB);
-        Graphics graphics(pScaledBitmap);
-        
-        // 设置高质量插值模式
-        graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-        graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
-        
-        // 计算缩放比例，保持宽高比
-        float scaleX = (float)targetWidth / screenWidth;
-        float scaleY = (float)targetHeight / screenHeight;
-        float scale = std::min(scaleX, scaleY);
-        
-        int scaledWidth = (int)(screenWidth * scale);
-        int scaledHeight = (int)(screenHeight * scale);
-        
-        // 计算居中位置
-        int offsetX = (targetWidth - scaledWidth) / 2;
-        int offsetY = (targetHeight - scaledHeight) / 2;
-        
-        // 绘制缩放后的图像
-        graphics.DrawImage(&bitmap, offsetX, offsetY, scaledWidth, scaledHeight);
-        
-        // 使用缩放后的位图
-        // 注意：Bitmap的赋值操作符和拷贝构造函数都是私有的
-        // 所以我们需要直接使用pScaledBitmap进行编码
-        // 保存原始位图以便清理
-        Bitmap* pOriginalBitmap = &bitmap;
-        
-        // 编码为JPEG
-        IStream* stream = NULL;
-        hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
-        if (FAILED(hr) || !stream) {
-            DeleteObject(hBitmap);
-            DeleteDC(hdcMem);
-            ReleaseDC(NULL, hdcScreen);
-            delete pScaledBitmap;
-            return false;
-        }
-
-        CLSID clsid;
-        if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
-            stream->Release();
-            DeleteObject(hBitmap);
-            DeleteDC(hdcMem);
-            ReleaseDC(NULL, hdcScreen);
-            delete pScaledBitmap;
-            return false;
-        }
-
-        EncoderParameters encoderParams;
-        encoderParams.Count = 1;
-        encoderParams.Parameter[0].Guid = EncoderQuality;
-        encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
-        encoderParams.Parameter[0].NumberOfValues = 1;
-
-        ULONG quality = GetQuality();
-        encoderParams.Parameter[0].Value = &quality;
-
-        Status status = pScaledBitmap->Save(stream, &clsid, &encoderParams);
-        if (status != Ok) {
-            stream->Release();
-            DeleteObject(hBitmap);
-            DeleteDC(hdcMem);
-            ReleaseDC(NULL, hdcScreen);
-            delete pScaledBitmap;
-            return false;
-        }
-
-        // 获取流数据
-        STATSTG stats;
-        hr = stream->Stat(&stats, STATFLAG_NONAME);
-        if (FAILED(hr)) {
-            stream->Release();
-            DeleteObject(hBitmap);
-            DeleteDC(hdcMem);
-            ReleaseDC(NULL, hdcScreen);
-            delete pScaledBitmap;
-            return false;
-        }
-        DWORD streamSize = stats.cbSize.LowPart;
-
-        HGLOBAL hGlobal = NULL;
-        hr = GetHGlobalFromStream(stream, &hGlobal);
-        if (FAILED(hr) || !hGlobal) {
-            stream->Release();
-            DeleteObject(hBitmap);
-            DeleteDC(hdcMem);
-            ReleaseDC(NULL, hdcScreen);
-            delete pScaledBitmap;
-            return false;
-        }
-
-        BYTE* pData = (BYTE*)GlobalLock(hGlobal);
-        if (!pData) {
-            stream->Release();
-            DeleteObject(hBitmap);
-            DeleteDC(hdcMem);
-            ReleaseDC(NULL, hdcScreen);
-            delete pScaledBitmap;
-            return false;
-        }
-
-        jpegData.resize(streamSize);
-        memcpy(jpegData.data(), pData, streamSize);
-
-        GlobalUnlock(hGlobal);
-        stream->Release();
-        delete pScaledBitmap;
-        
-        // 清理原始资源
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return true;
-    }
-
-    // 创建内存流
-    IStream* stream = NULL;
-    hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
-    if (FAILED(hr) || !stream) {
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    // 编码参数 - 设置JPEG质量
-    CLSID clsid;
-    if (!GetEncoderClsid(L"image/jpeg", &clsid)) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    EncoderParameters encoderParams;
-    encoderParams.Count = 1;
-    encoderParams.Parameter[0].Guid = EncoderQuality;
-    encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
-    encoderParams.Parameter[0].NumberOfValues = 1;
-
-    // 设置质量（0-100，越高质量越好但文件越大）
-    ULONG quality = GetQuality();
-    encoderParams.Parameter[0].Value = &quality;
-
-    // 保存为JPEG到内存流
-    Status status = bitmap.Save(stream, &clsid, &encoderParams);
-    if (status != Ok) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    // 获取流大小
-    STATSTG stats;
-    hr = stream->Stat(&stats, STATFLAG_NONAME);
-    if (FAILED(hr)) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-    DWORD streamSize = stats.cbSize.LowPart;
-
-    // 读取流数据
-    HGLOBAL hGlobal = NULL;
-    hr = GetHGlobalFromStream(stream, &hGlobal);
-    if (FAILED(hr) || !hGlobal) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    BYTE* pData = (BYTE*)GlobalLock(hGlobal);
-    if (!pData) {
-        stream->Release();
-        DeleteObject(hBitmap);
-        DeleteDC(hdcMem);
-        ReleaseDC(NULL, hdcScreen);
-        return false;
-    }
-
-    jpegData.resize(streamSize);
-    memcpy(jpegData.data(), pData, streamSize);
-
-    // 清理
-    GlobalUnlock(hGlobal);
-    stream->Release();
-    DeleteObject(hBitmap);
-    DeleteDC(hdcMem);
-    ReleaseDC(NULL, hdcScreen);
-
-    return true;
 }
 
 void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, const std::string& localInterface) {
@@ -603,70 +482,53 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
     multicastAddr.sin_addr.s_addr = inet_addr(multicastGroup.c_str());
     multicastAddr.sin_port = htons(port);
 
-    // 帧ID计数器
-    m_frameId = 0;
-
     // 发送缓冲区
     std::vector<char> sendBuffer(sizeof(FragmentHeader) + MAX_FRAGMENT_SIZE);
 
-    // 尝试初始化DXGI桌面复制
-    bool useDXGI = InitDXGIDuplication();
+    // 使用高精度计时器
+    HighResolutionTimer frameRateTimer;
+    frameRateTimer.Reset();
+
+    // 性能统计变量
+    uint32_t framesSent = 0;
+    HighResolutionTimer statsTimer;
+    statsTimer.Reset();
 
     while (m_bSending) {
-        auto startTime = high_resolution_clock::now();
+        // 获取配置的帧率
+        int currentFrameRate = GetFrameRate();
+        double frameIntervalMicroseconds = 1000000.0 / currentFrameRate;
 
-        // 递增帧ID
-        m_frameId++;
-
-        // 捕获屏幕并转换为JPEG
-        std::vector<BYTE> jpegData;
-        bool captureSuccess = false;
-
-        if (useDXGI) {
-            captureSuccess = CaptureScreenDXGI(jpegData);
-            
-            // 改进的降级策略：根据连续失败次数决定是否降级
-            if (!captureSuccess) {
-                m_dxgiFailureCount++;
+        // 检查帧率控制：确保帧间隔时间已过
+        uint64_t elapsedMicroseconds = frameRateTimer.GetElapsedMicroseconds();
+        if (elapsedMicroseconds < static_cast<uint64_t>(frameIntervalMicroseconds)) {
+            uint64_t remainingMicroseconds = static_cast<uint64_t>(frameIntervalMicroseconds) - elapsedMicroseconds;
+            // 使用更精确的等待方法
+            if (remainingMicroseconds >= 1000) {
+                // 毫秒级等待
+                DWORD sleepTime = static_cast<DWORD>(remainingMicroseconds / 1000);
+                Sleep(sleepTime);
+            } else if (remainingMicroseconds > 0) {
+                // 微秒级等待，使用高精度忙等待
+                LARGE_INTEGER start, end, freq;
+                QueryPerformanceFrequency(&freq);
+                QueryPerformanceCounter(&start);
+                double waitSeconds = remainingMicroseconds / 1000000.0;
+                double waitTicks = waitSeconds * freq.QuadPart;
                 
-                // 连续失败次数超过阈值才永久降级
-                if (m_dxgiFailureCount >= DXGI_FAILURE_THRESHOLD) {
-                    useDXGI = false;
-                    // 清理DXGI资源
-                    if (m_stagingTexture) {
-                        m_stagingTexture->Release();
-                        m_stagingTexture = nullptr;
-                    }
-                    if (m_deskDupl) {
-                        m_deskDupl->Release();
-                        m_deskDupl = nullptr;
-                    }
-                    if (m_d3dContext) {
-                        m_d3dContext->Release();
-                        m_d3dContext = nullptr;
-                    }
-                    if (m_d3dDevice) {
-                        m_d3dDevice->Release();
-                        m_d3dDevice = nullptr;
-                    }
-                }
-            } else {
-                // 成功捕获，重置失败计数
-                m_dxgiFailureCount = 0;
+                do {
+                    QueryPerformanceCounter(&end);
+                } while ((end.QuadPart - start.QuadPart) < waitTicks);
             }
         }
 
-        // 如果失败，则使用GDI
-        if (!captureSuccess) {
-            captureSuccess = CaptureScreenGDI(jpegData);
-        }
-
-        if (captureSuccess) {
-            // 计算需要多少分片
-            size_t frameSize = jpegData.size();
+        // 从队列中尝试取一帧
+        CapturedFrame frame;
+        if (m_frameQueue.TryPop(frame)) {
+            // 发送帧的每个分片
+            size_t frameSize = frame.jpegData.size();
             uint16_t totalFragments = static_cast<uint16_t>((frameSize + MAX_FRAGMENT_SIZE - 1) / MAX_FRAGMENT_SIZE);
 
-            // 发送每个分片
             for (uint16_t fragmentIndex = 0; fragmentIndex < totalFragments; fragmentIndex++) {
                 // 计算当前分片的大小和偏移量
                 size_t offset = fragmentIndex * MAX_FRAGMENT_SIZE;
@@ -676,7 +538,7 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
                 // 准备分片头
                 FragmentHeader header;
                 header.magic = htons(FRAGMENT_MAGIC);
-                header.frameId = htonl(m_frameId);            // 添加帧ID
+                header.frameId = htonl(frame.frameId);
                 header.frameSize = htonl(static_cast<uint32_t>(frameSize));
                 header.totalFragments = htons(totalFragments);
                 header.fragmentIndex = htons(fragmentIndex);
@@ -685,7 +547,7 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
                 // 复制头和数据到发送缓冲区
                 memcpy(sendBuffer.data(), &header, sizeof(FragmentHeader));
                 memcpy(sendBuffer.data() + sizeof(FragmentHeader),
-                    jpegData.data() + offset, fragmentSize);
+                    frame.jpegData.data() + offset, fragmentSize);
 
                 // 发送分片
                 int sent = sendto(m_sendSocket, sendBuffer.data(),
@@ -693,22 +555,27 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
                     0, (sockaddr*)&multicastAddr, sizeof(multicastAddr));
 
                 if (sent == SOCKET_ERROR) {
-                    // 错误处理，但继续发送下一个分片
                     continue;
                 }
             }
+
+            // 更新性能统计
+            framesSent++;
+            
+            // 重置计时器以开始新的帧间隔
+            frameRateTimer.Reset();
+        } else {
+            // 没有可用的帧，短暂等待
+            Sleep(1);
         }
 
-        // 计算剩余时间并等待
-        auto endTime = high_resolution_clock::now();
-        auto elapsed = duration_cast<milliseconds>(endTime - startTime);
-
-        // 根据当前帧率计算帧间隔
-        int currentFrameRate = GetFrameRate();
-        milliseconds frameInterval(1000 / currentFrameRate); // 转换为毫秒
-
-        if (elapsed < frameInterval) {
-            Sleep(static_cast<DWORD>((frameInterval - elapsed).count()));
+        // 每秒输出一次发送帧率统计
+        if (statsTimer.GetElapsedSeconds() >= 1.0) {
+            double sendFPS = framesSent / statsTimer.GetElapsedSeconds();
+            // 调试输出：实际发送帧率
+            // printf("发送帧率: %.1f FPS (目标: %d FPS)\n", sendFPS, currentFrameRate);
+            framesSent = 0;
+            statsTimer.Reset();
         }
     }
 
@@ -717,3 +584,4 @@ void ScreenSender::SendThreadFunc(const std::string& multicastGroup, int port, c
     WSACleanup();
     m_sendSocket = INVALID_SOCKET;
 }
+
